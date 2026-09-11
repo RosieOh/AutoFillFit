@@ -1,0 +1,173 @@
+/* ==================================================================
+ * AutoFill-Fit — content script styles
+ * 호스트 페이지 CSS와 충돌하지 않도록 모든 값을 명시적으로 선언한다.
+ * ================================================================== */
+
+#autofill-fit-root {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2147483647; /* 32-bit int 최대값 — 어떤 모달보다도 위 */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Malgun Gothic',
+    'Apple SD Gothic Neo', Roboto, sans-serif;
+  pointer-events: none; /* 컨테이너는 클릭을 가로채지 않음 */
+}
+
+/* ------------------------------ 버튼 ------------------------------ */
+#autofill-fit-root .autofill-fit-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(79, 70, 229, 0.38), 0 1px 3px rgba(0, 0, 0, 0.16);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+  -webkit-font-smoothing: antialiased;
+  text-transform: none;
+}
+
+#autofill-fit-root .autofill-fit-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 26px rgba(79, 70, 229, 0.46), 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+#autofill-fit-root .autofill-fit-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.34);
+}
+
+#autofill-fit-root .autofill-fit-btn:focus-visible {
+  outline: 3px solid rgba(124, 58, 237, 0.55);
+  outline-offset: 3px;
+}
+
+#autofill-fit-root .autofill-fit-btn.is-busy {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+#autofill-fit-root .autofill-fit-btn__icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+#autofill-fit-root .autofill-fit-btn__text {
+  font: inherit;
+  color: inherit;
+}
+
+/* ------------------------------ 토스트 ------------------------------ */
+#autofill-fit-root .autofill-fit-toast {
+  pointer-events: none;
+  order: -1; /* 버튼 위쪽에 표시 */
+  box-sizing: border-box;
+  max-width: 340px;
+  margin: 0;
+  padding: 11px 14px;
+  border-radius: 10px;
+  background: rgba(17, 24, 39, 0.94);
+  color: #f9fafb;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  /* 여러 줄 한글은 좌측 정렬이라야 읽힌다 — 우측 정렬은 줄머리가 매번 어긋난다 */
+  text-align: left;
+  word-break: keep-all;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* 비워 둔 칸 안내 — 요약보다 한 단계 낮은 톤으로 쌓는다 */
+#autofill-fit-root .autofill-fit-toast-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(249, 250, 251, 0.16);
+  color: #fde68a;
+  font-weight: 400;
+}
+
+#autofill-fit-root .autofill-fit-toast.is-error .autofill-fit-toast-note {
+  color: #fecaca;
+}
+
+#autofill-fit-root .autofill-fit-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#autofill-fit-root .autofill-fit-toast.is-error {
+  background: rgba(153, 27, 27, 0.94);
+  color: #fef2f2;
+}
+
+/* ------------------- 확장이 일부러 비워 둔 필드 ------------------- */
+/* 토스트가 사라진 뒤에도 "여기는 손대야 한다"가 남아 있어야 한다 */
+.autofill-fit-skipped {
+  outline: 2px dashed rgba(217, 119, 6, 0.75) !important;
+  outline-offset: 1px;
+  background-color: rgba(251, 191, 36, 0.08) !important;
+}
+
+/* --------------------- 자동 입력된 필드 하이라이트 --------------------- */
+.autofill-fit-highlight {
+  animation: autofill-fit-flash 1.5s ease-out 1;
+}
+
+@keyframes autofill-fit-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0.55);
+    background-color: rgba(124, 58, 237, 0.12);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(124, 58, 237, 0);
+    background-color: rgba(124, 58, 237, 0.06);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(124, 58, 237, 0);
+    background-color: transparent;
+  }
+}
+
+/* ------------------------------ 반응형 ------------------------------ */
+@media (max-width: 480px) {
+  #autofill-fit-root {
+    right: 14px;
+    bottom: 14px;
+  }
+
+  #autofill-fit-root .autofill-fit-btn {
+    padding: 11px 16px;
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #autofill-fit-root .autofill-fit-btn,
+  #autofill-fit-root .autofill-fit-toast {
+    transition: none;
+  }
+
+  .autofill-fit-highlight {
+    animation: none;
+  }
+}
