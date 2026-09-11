@@ -1,0 +1,14 @@
+# 작성자 신원을 하나로 모은다.
+#
+# 이 저장소는 여러 기기에서 커밋된다. 기기마다 전역 git 신원이 달라
+# git shortlog·git log가 같은 사람을 여러 명으로 센다.
+# 왼쪽이 정식 표기이고, 오른쪽 이메일로 들어온 커밋을 그쪽으로 모은다.
+#
+# 확인: git shortlog -sne
+# 문법: https://git-scm.com/docs/gitmailmap
+
+RosieOh <20172207@gm.hannam.ac.kr> <thoh@soundmind.life>
+RosieOh <20172207@gm.hannam.ac.kr> <soundmind8842@gmail.com>
+RosieOh <20172207@gm.hannam.ac.kr> <RosieOh@users.noreply.github.com>
+RosieOh <20172207@gm.hannam.ac.kr> thoh <thoh@soundmind.life>
+RosieOh <20172207@gm.hannam.ac.kr> vrsoft <vrsoft@localhost>
