@@ -133,6 +133,8 @@ npm run admin:grant -- hong@example.com --revoke   # 회수
 - 제목과 본문이 모두 채워진 문항만 포함합니다. 빈 문항을 내려보내면 확장이 지원서에
   빈 칸을 채우게 됩니다.
 - 확장이 매칭에 쓰는 `keywords`·`charLimit`·`type`을 함께 내려줍니다.
+- 같은 이유로 `education`·`careers`·`certificates`도 평탄화해 내려줍니다.
+  전부 최신순이고, 재직 중인 경력의 `leaveDate`는 `null`로 비웁니다.
 - 이력서가 없으면 `null`이 아니라 `[]`입니다. `null`이면 확장이 순회에서 터집니다.
 
 `autofill.coverLetter`는 `isDefault` → `type: "MOTIVATION"` → 첫 문항 순으로 선택되며,
@@ -148,10 +150,30 @@ npm run admin:grant -- hong@example.com --revoke   # 회수
 있습니다. 따라서 이 서버에는 `chrome-extension://` CORS 항목도, 확장의
 `host_permissions`도 필요하지 않습니다.
 
+## 내 계정
+
+| 메서드 | 경로 | 설명 |
+| --- | --- | --- |
+| `GET` | `/api/users/me/export` | 계정·인적사항·이력서 전체를 한 응답으로 |
+| `DELETE` | `/api/users/me` | 회원 탈퇴 (본문에 `password` 필요) |
+
+탈퇴는 되돌릴 수 없으므로 비밀번호를 다시 받습니다. 토큰만으로 지우게 하면 잠깐
+자리를 비운 사이 열린 브라우저에서 삭제가 일어납니다.
+
+## 요청 제한
+
+`POST /auth/login`은 분당 10회, `POST /auth/signup`은 시간당 5회(IP 기준)입니다.
+여기에 더해 **계정 단위로** 연속 실패를 세어 5회에서 10분간 잠급니다
+(`users.failed_login_attempts`, `users.locked_until`).
+
+통합 테스트에서만 `THROTTLE_DISABLED=true`로 끕니다. `.env.example`에 넣지 않았습니다.
+
 ## 데이터 모델
 
 ```
 User (1) ─── (1) Profile     name, phone, birthdate, address, zipCode
+  │                          + 동의 시각(terms/privacy)과 policyVersion
+  │                          + 로그인 실패 횟수와 잠금 시각
   │
   └── (N) Resume             isPrimary + updatedAt 기준으로 최신 1건 조회
         ├── education      JSONB[]  학교명, 전공, 학점, 입학/졸업년월
