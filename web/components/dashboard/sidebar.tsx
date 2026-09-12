@@ -7,6 +7,7 @@ import {
   FileText,
   GraduationCap,
   LogOut,
+  Settings,
   ShieldCheck,
   User,
   Zap,
@@ -175,6 +176,31 @@ export function Sidebar({
             백오피스
           </Link>
         ) : null}
+
+        {/*
+          계정 삭제와 데이터 내려받기로 가는 길.
+          여기 없으면 사용자는 나갈 방법을 찾지 못한다.
+        */}
+        <Link
+          href="/account"
+          onClick={(event) => {
+            if (
+              isDirty &&
+              !window.confirm(
+                '저장하지 않은 변경사항이 있습니다. 계정 화면으로 이동하면 사라집니다. 계속할까요?',
+              )
+            ) {
+              event.preventDefault();
+            }
+          }}
+          className="mb-1 flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
+        >
+          <Settings
+            className="h-4.5 w-4.5 shrink-0 text-slate-400"
+            aria-hidden="true"
+          />
+          계정
+        </Link>
 
         <div className="flex items-center gap-3 rounded-lg px-2 py-2">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold uppercase text-slate-600">

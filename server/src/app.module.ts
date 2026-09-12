@@ -7,6 +7,7 @@ import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
 import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { ResumeModule } from './resume/resume.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ResumeModule } from './resume/resume.module';
     ]),
     AuthModule,
     ResumeModule,
+    UsersModule,
     AdminModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
