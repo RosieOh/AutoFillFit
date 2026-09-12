@@ -131,6 +131,38 @@ export interface Resume {
   updatedAt: string;
 }
 
+/** 확장이 지원서에 넣을 학력 한 건 (최종학력이 첫 항목) */
+export interface AutofillEducation {
+  schoolName: string;
+  major: string | null;
+  degree: EducationDegree | null;
+  status: EducationStatus | null;
+  gpa: string | null;
+  gpaScale: string | null;
+  admissionDate: string | null;
+  graduationDate: string | null;
+}
+
+/** 확장이 지원서에 넣을 경력 한 건 (재직 중인 곳이 첫 항목) */
+export interface AutofillCareer {
+  companyName: string;
+  department: string | null;
+  jobTitle: string | null;
+  position: string | null;
+  joinDate: string | null;
+  leaveDate: string | null;
+  isCurrent: boolean;
+  mainTasks: string | null;
+}
+
+/** 확장이 지원서에 넣을 자격증 한 건 (취득일 최신순) */
+export interface AutofillCertificate {
+  name: string;
+  issuer: string | null;
+  acquiredAt: string | null;
+  score: string | null;
+}
+
 /** 확장이 문항 매칭에 쓰는 자소서 한 건 */
 export interface AutofillEssay {
   title: string;
@@ -158,6 +190,10 @@ export interface MyResumeResponse {
     coverLetter: string | null;
     /** 확장이 지원서 문항과 대조해 칸마다 다른 답변을 넣는다 */
     essays: AutofillEssay[];
+    /** 학력·경력·자격증. 전부 최신순 — 지원서가 한 칸만 받으면 첫 항목을 쓴다 */
+    education: AutofillEducation[];
+    careers: AutofillCareer[];
+    certificates: AutofillCertificate[];
   };
   updatedAt: string | null;
 }

@@ -240,6 +240,38 @@ describe('Resume (통합)', () => {
             content: '꾸준했습니다.',
           },
         ],
+        education: [
+          {
+            schoolName: '한국대학교',
+            major: '컴퓨터공학',
+            degree: 'BACHELOR',
+            status: 'GRADUATED',
+            gpa: null,
+            gpaScale: null,
+            admissionDate: '2014-03',
+            graduationDate: '2018-02',
+          },
+        ],
+        careers: [
+          {
+            companyName: '로지소프트',
+            department: null,
+            jobTitle: '백엔드 개발',
+            position: null,
+            joinDate: '2020-01',
+            leaveDate: null,
+            isCurrent: true,
+            mainTasks: '결제 API 설계',
+          },
+        ],
+        certificates: [
+          {
+            name: '정보처리기사',
+            issuer: '한국산업인력공단',
+            acquiredAt: null,
+            score: null,
+          },
+        ],
       });
     });
 
@@ -299,6 +331,77 @@ describe('Resume (통합)', () => {
     it('이력서가 없으면 빈 배열 — null이면 확장이 순회에서 터진다', async () => {
       const res = await load().expect(200);
       expect(res.body.autofill.essays).toEqual([]);
+      expect(res.body.autofill.education).toEqual([]);
+      expect(res.body.autofill.careers).toEqual([]);
+      expect(res.body.autofill.certificates).toEqual([]);
+    });
+
+    /**
+     * 대시보드는 학력 20점·경력 20점·자격증 10점을 채우게 한다.
+     * 여기서 내려보내지 않으면 그 70점이 지원서에 한 글자도 들어가지 않는다.
+     */
+    it('학력·경력·자격증을 평탄화해 내려준다', async () => {
+      await save(FULL).expect(200);
+      const res = await load().expect(200);
+
+      expect(res.body.autofill.education[0]).toEqual({
+        schoolName: '한국대학교',
+        major: '컴퓨터공학',
+        degree: 'BACHELOR',
+        status: 'GRADUATED',
+        gpa: null,
+        gpaScale: null,
+        admissionDate: '2014-03',
+        graduationDate: '2018-02',
+      });
+      expect(res.body.autofill.careers[0].companyName).toBe('로지소프트');
+      expect(res.body.autofill.certificates[0].name).toBe('정보처리기사');
+    });
+
+    it('최종학력이 첫 항목이다 — 지원서가 한 칸만 받으면 그것을 쓴다', async () => {
+      await save({
+        education: [
+          { schoolName: '한국고등학교', degree: 'HIGH_SCHOOL', graduationDate: '2014-02' },
+          { schoolName: '한국대학교', degree: 'BACHELOR', graduationDate: '2018-02' },
+        ],
+      }).expect(200);
+
+      const res = await load().expect(200);
+      expect(res.body.autofill.education.map((e) => e.schoolName)).toEqual([
+        '한국대학교',
+        '한국고등학교',
+      ]);
+    });
+
+    it('재직 중인 회사가 첫 항목이고 퇴사년월은 비운다', async () => {
+      await save({
+        careers: [
+          { companyName: '이전회사', joinDate: '2018-01', leaveDate: '2019-12' },
+          {
+            companyName: '현재회사',
+            joinDate: '2020-01',
+            leaveDate: '2023-12',
+            isCurrent: true,
+          },
+        ],
+      }).expect(200);
+
+      const res = await load().expect(200);
+      expect(res.body.autofill.careers[0].companyName).toBe('현재회사');
+      // 재직 중인데 퇴사년월이 지원서에 들어가면 거짓이 된다
+      expect(res.body.autofill.careers[0].leaveDate).toBeNull();
+      expect(res.body.autofill.careers[1].leaveDate).toBe('2019-12');
+    });
+
+    it('이름이 빈 항목은 내려보내지 않는다', async () => {
+      await save({
+        education: [{ schoolName: '  ' }, { schoolName: '한국대학교' }],
+        certificates: [{ name: '' }, { name: '정보처리기사' }],
+      }).expect(200);
+
+      const res = await load().expect(200);
+      expect(res.body.autofill.education).toHaveLength(1);
+      expect(res.body.autofill.certificates).toHaveLength(1);
     });
 
     it('isDefault 문항을 기본 자소서로 고른다', async () => {

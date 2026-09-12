@@ -164,10 +164,19 @@ export function useExtension(autofill: MyResumeResponse['autofill'] | null) {
         source: 'autofill-fit-web',
         type: 'SYNC',
         nonce,
+        /**
+         * 인적사항.
+         *
+         * birthdate·address·zipCode는 서버가 내려주는데도 오랫동안 여기서 빠져
+         * 대시보드에 입력한 주소와 생년월일이 확장까지 도달하지 못했다.
+         */
         profile: {
           name: current.name ?? '',
           email: current.email,
           phone: current.phone ?? '',
+          birthdate: current.birthdate ?? '',
+          address: current.address ?? '',
+          zipCode: current.zipCode ?? '',
           // 문항을 찾지 못했을 때만 쓰는 fallback
           coverLetter: current.coverLetter ?? '',
         },
@@ -176,6 +185,14 @@ export function useExtension(autofill: MyResumeResponse['autofill'] | null) {
          * 이걸 넘기지 않으면 확장이 모든 장문 칸에 같은 글을 넣는다.
          */
         essays: current.essays ?? [],
+        /**
+         * 학력·경력·자격증.
+         * 대시보드가 70점을 배정하는 내용인데 전달되지 않으면
+         * 지원서에 한 글자도 들어가지 않는다.
+         */
+        education: current.education ?? [],
+        careers: current.careers ?? [],
+        certificates: current.certificates ?? [],
       },
       window.location.origin,
     );

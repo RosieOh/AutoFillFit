@@ -5,7 +5,52 @@ import { Profile } from '../users/entities/profile.entity';
 import { User } from '../users/entities/user.entity';
 import { UpsertProfileDto, UpsertMyResumeDto } from './dto/upsert-my-resume.dto';
 import { Resume } from './entities/resume.entity';
-import { EssayItem, EssayType } from './types/resume-json.types';
+import {
+  CareerItem,
+  CertificateItem,
+  EducationDegree,
+  EducationItem,
+  EducationStatus,
+  EssayItem,
+  EssayType,
+} from './types/resume-json.types';
+
+/**
+ * 확장이 지원서에 넣을 학력 한 건.
+ *
+ * 한국 지원서는 보통 '최종학력' 한 줄만 받으므로 최신순으로 내려준다.
+ * null 자리를 undefined로 두면 확장이 in 연산으로 존재 여부를 판단할 때 어긋난다.
+ */
+export interface AutofillEducation {
+  schoolName: string;
+  major: string | null;
+  degree: EducationDegree | null;
+  status: EducationStatus | null;
+  gpa: string | null;
+  gpaScale: string | null;
+  admissionDate: string | null;
+  graduationDate: string | null;
+}
+
+/** 확장이 지원서에 넣을 경력 한 건. 최신순. */
+export interface AutofillCareer {
+  companyName: string;
+  department: string | null;
+  jobTitle: string | null;
+  position: string | null;
+  joinDate: string | null;
+  leaveDate: string | null;
+  isCurrent: boolean;
+  mainTasks: string | null;
+}
+
+/** 확장이 지원서에 넣을 자격증 한 건. 취득일 최신순. */
+export interface AutofillCertificate {
+  name: string;
+  issuer: string | null;
+  acquiredAt: string | null;
+  score: string | null;
+}
 
 /** 확장이 문항 매칭에 쓰는 자소서 한 건 */
 export interface AutofillEssay {
@@ -41,6 +86,16 @@ export interface MyResumeResponse {
      * 이걸 내려보내지 않으면 모든 장문 칸에 같은 글이 들어간다.
      */
     essays: AutofillEssay[];
+    /**
+     * 학력·경력·자격증.
+     *
+     * 대시보드는 이 세 섹션에 70점을 배정하는데 확장에 전달되지 않으면
+     * 사용자가 채운 내용이 지원서에 한 글자도 들어가지 않는다.
+     * 전부 최신순이고, 지원서가 한 칸만 받으면 확장이 첫 항목을 쓴다.
+     */
+    education: AutofillEducation[];
+    careers: AutofillCareer[];
+    certificates: AutofillCertificate[];
   };
   updatedAt: Date | null;
 }
@@ -89,6 +144,9 @@ export class ResumeService {
         zipCode: profile?.zipCode ?? null,
         coverLetter: this.pickDefaultEssay(resume),
         essays: this.toAutofillEssays(resume),
+        education: this.toAutofillEducation(resume),
+        careers: this.toAutofillCareers(resume),
+        certificates: this.toAutofillCertificates(resume),
       },
       updatedAt: resume?.updatedAt ?? profile?.updatedAt ?? null,
     };
@@ -209,6 +267,79 @@ export class ResumeService {
         charLimit: essay.charLimit ?? null,
         isDefault: essay.isDefault ?? false,
         content: essay.content,
+      }));
+  }
+
+  /**
+   * 최신순 정렬 키.
+   *
+   * 날짜는 "YYYY-MM" 또는 "YYYY-MM-DD" 문자열이라 사전순이 곧 시간순이다.
+   * 비어 있으면 가장 오래된 것으로 보내 최신 항목이 앞에 오게 한다.
+   */
+  private recencyKey(value?: string | null): string {
+    return value?.trim() ? value : '';
+  }
+
+  /** 최종학력이 먼저 오도록 졸업년월 내림차순. */
+  private toAutofillEducation(resume: Resume | null): AutofillEducation[] {
+    return (resume?.education ?? [])
+      .filter((item): item is EducationItem => Boolean(item?.schoolName?.trim()))
+      .slice()
+      .sort(
+        (a, b) =>
+          this.recencyKey(b.graduationDate ?? b.admissionDate).localeCompare(
+            this.recencyKey(a.graduationDate ?? a.admissionDate),
+          ),
+      )
+      .map((item) => ({
+        schoolName: item.schoolName,
+        major: item.major ?? null,
+        degree: item.degree ?? null,
+        status: item.status ?? null,
+        gpa: item.gpa ?? null,
+        gpaScale: item.gpaScale ?? null,
+        admissionDate: item.admissionDate ?? null,
+        graduationDate: item.graduationDate ?? null,
+      }));
+  }
+
+  /** 재직 중인 회사가 먼저, 그다음 입사년월 내림차순. */
+  private toAutofillCareers(resume: Resume | null): AutofillCareer[] {
+    return (resume?.careers ?? [])
+      .filter((item): item is CareerItem => Boolean(item?.companyName?.trim()))
+      .slice()
+      .sort((a, b) => {
+        if (Boolean(a.isCurrent) !== Boolean(b.isCurrent)) {
+          return a.isCurrent ? -1 : 1;
+        }
+        return this.recencyKey(b.joinDate).localeCompare(this.recencyKey(a.joinDate));
+      })
+      .map((item) => ({
+        companyName: item.companyName,
+        department: item.department ?? null,
+        jobTitle: item.jobTitle ?? null,
+        position: item.position ?? null,
+        joinDate: item.joinDate ?? null,
+        // 재직 중이면 퇴사년월을 내려보내지 않는다. 지원서에 들어가면 거짓이 된다.
+        leaveDate: item.isCurrent ? null : (item.leaveDate ?? null),
+        isCurrent: item.isCurrent ?? false,
+        mainTasks: item.mainTasks ?? null,
+      }));
+  }
+
+  /** 취득일 내림차순. */
+  private toAutofillCertificates(resume: Resume | null): AutofillCertificate[] {
+    return (resume?.certificates ?? [])
+      .filter((item): item is CertificateItem => Boolean(item?.name?.trim()))
+      .slice()
+      .sort((a, b) =>
+        this.recencyKey(b.acquiredAt).localeCompare(this.recencyKey(a.acquiredAt)),
+      )
+      .map((item) => ({
+        name: item.name,
+        issuer: item.issuer ?? null,
+        acquiredAt: item.acquiredAt ?? null,
+        score: item.score ?? null,
       }));
   }
 
