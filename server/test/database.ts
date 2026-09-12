@@ -70,4 +70,13 @@ export function applyDbEnv(config: TestDbConfig): void {
   // AppModule은 NODE_ENV !== 'production'일 때 SQL을 전부 찍는다.
   // 테스트 출력이 파묻히므로 production으로 둔다(다른 동작 차이는 없다).
   process.env.NODE_ENV = 'production';
+
+  /*
+   * 요청 제한을 끈다.
+   *
+   * 통합 테스트는 한 IP에서 수십 번 로그인·가입한다. 제한을 켜 둔 채
+   * 테스트를 통과시키려면 한계를 운영에서 의미 없을 만큼 올려야 한다.
+   * 제한 자체는 throttle.e2e-spec.ts가 켠 채로 따로 검증한다.
+   */
+  process.env.THROTTLE_DISABLED = 'true';
 }

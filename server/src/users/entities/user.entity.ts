@@ -42,6 +42,19 @@ export class User {
   @Column({ type: 'varchar', length: 255, select: false })
   password: string;
 
+  /**
+   * 연속 로그인 실패 횟수.
+   *
+   * 성공하면 0으로 돌아간다. IP 기준 제한만으로는 여러 IP를 돌려 쓰는
+   * 크리덴셜 스터핑을 막지 못하므로 계정 단위로도 센다.
+   */
+  @Column({ name: 'failed_login_attempts', type: 'int', default: 0 })
+  failedLoginAttempts: number;
+
+  /** 이 시각까지 로그인을 거부한다. null이면 잠금 없음. */
+  @Column({ name: 'locked_until', type: 'timestamptz', nullable: true })
+  lockedUntil: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

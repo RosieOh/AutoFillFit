@@ -23,6 +23,12 @@ export interface AuthResponse {
   user: { id: string; email: string; role: UserRole; createdAt: Date };
 }
 
+/** 연속 실패가 이 횟수에 닿으면 잠근다. */
+const MAX_LOGIN_ATTEMPTS = 5;
+
+/** 잠금 유지 시간. 짧으면 무의미하고 길면 오타 낸 본인이 갇힌다. */
+const LOCK_DURATION_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -78,8 +84,18 @@ export class AuthService {
         role: true,
         isActive: true,
         createdAt: true,
+        failedLoginAttempts: true,
+        lockedUntil: true,
       },
     });
+
+    /*
+     * 잠긴 계정은 비밀번호를 맞혀도 열리지 않는다.
+     * 비밀번호 비교 전에 막아야 bcrypt 비용도 아낀다.
+     */
+    if (user && this.isLocked(user)) {
+      throw new UnauthorizedException(this.lockMessage(user));
+    }
 
     // 계정 존재 여부가 응답 시간으로 새지 않도록 더미 해시와 비교한다.
     const hash =
@@ -88,6 +104,7 @@ export class AuthService {
     const matched = await bcrypt.compare(dto.password, hash);
 
     if (!user || !matched) {
+      if (user) await this.recordFailedLogin(user);
       throw new UnauthorizedException(
         '이메일 또는 비밀번호가 올바르지 않습니다.',
       );
@@ -101,7 +118,49 @@ export class AuthService {
       );
     }
 
+    // 성공했으니 실패 기록을 지운다. 남겨 두면 오래된 오타가 쌓여 잠긴다.
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      await this.userRepository.update(user.id, {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      });
+    }
+
     return this.buildAuthResponse(user);
+  }
+
+  /**
+   * 연속 실패를 세고, 한계를 넘으면 일정 시간 잠근다.
+   *
+   * IP 기준 제한만으로는 IP를 돌려 쓰는 크리덴셜 스터핑을 막지 못한다.
+   * 이 서비스는 계정 하나가 뚫리면 이름·연락처·생년월일·주소·학력·경력·
+   * 자소서 전문이 한 번에 나가므로 계정 단위로도 센다.
+   */
+  private async recordFailedLogin(user: User): Promise<void> {
+    const attempts = (user.failedLoginAttempts ?? 0) + 1;
+
+    if (attempts >= MAX_LOGIN_ATTEMPTS) {
+      await this.userRepository.update(user.id, {
+        failedLoginAttempts: attempts,
+        lockedUntil: new Date(Date.now() + LOCK_DURATION_MS),
+      });
+      return;
+    }
+
+    await this.userRepository.update(user.id, {
+      failedLoginAttempts: attempts,
+    });
+  }
+
+  private isLocked(user: User): boolean {
+    return Boolean(user.lockedUntil && user.lockedUntil.getTime() > Date.now());
+  }
+
+  /** 언제 풀리는지 알려준다. 그냥 '실패'라고만 하면 계속 시도하게 된다. */
+  private lockMessage(user: User): string {
+    const remainingMs = (user.lockedUntil?.getTime() ?? 0) - Date.now();
+    const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
+    return `로그인 시도가 너무 많았습니다. ${minutes}분 후에 다시 시도해 주세요.`;
   }
 
   private buildAuthResponse(user: User): AuthResponse {
