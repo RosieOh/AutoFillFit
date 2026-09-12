@@ -71,7 +71,12 @@ describe('요청 제한 (통합)', () => {
     for (let i = 0; i < 8; i += 1) {
       const res = await http()
         .post('/auth/signup')
-        .send({ email: `spam${i}@example.com`, password: 'passw0rd123' });
+        .send({
+          email: `spam${i}@example.com`,
+          password: 'passw0rd123',
+          termsAgreed: true,
+          privacyAgreed: true,
+        });
       codes.push(res.status);
     }
 

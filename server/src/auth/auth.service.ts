@@ -11,6 +11,7 @@ import { DataSource, Repository } from 'typeorm';
 import { Profile } from '../users/entities/profile.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import { LoginDto } from './dto/login.dto';
+import { POLICY_VERSION } from './policy';
 import { SignupDto } from './dto/signup.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
@@ -51,7 +52,15 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
 
     const user = await this.dataSource.transaction(async (manager) => {
-      const created = manager.create(User, { email, password: passwordHash });
+      // 동의 시각과 문서 버전을 함께 남긴다. 없으면 나중에 증명할 방법이 없다.
+      const agreedAt = new Date();
+      const created = manager.create(User, {
+        email,
+        password: passwordHash,
+        termsAgreedAt: agreedAt,
+        privacyAgreedAt: agreedAt,
+        policyVersion: POLICY_VERSION,
+      });
       const saved = await manager.save(User, created);
 
       const profile = manager.create(Profile, {

@@ -70,7 +70,14 @@ export async function createUser(
 
   const response = await http()
     .post('/auth/signup')
-    .send({ email, password: 'passw0rd123', ...overrides })
+    .send({
+      email,
+      password: 'passw0rd123',
+      // 가입은 두 동의가 없으면 400이다. 기본으로 넣고 필요하면 덮어쓴다.
+      termsAgreed: true,
+      privacyAgreed: true,
+      ...overrides,
+    })
     .expect(201);
 
   return {

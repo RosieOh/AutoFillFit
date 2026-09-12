@@ -6,12 +6,15 @@ import { api, setToken, toErrorMessage } from '@/lib/axios';
 import type { AuthResponse } from '@/types/resume';
 import { Loader2, LogIn, Zap } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { forwardRef, Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 interface LoginFormValues {
   email: string;
   password: string;
+  /** 가입 시에만 쓰는 필수 동의 (개인정보보호법 제15조) */
+  termsAgreed: boolean;
+  privacyAgreed: boolean;
 }
 
 export default function LoginPage() {
@@ -33,16 +36,30 @@ function LoginForm() {
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<LoginFormValues>({
-    defaultValues: { email: '', password: '' },
+    defaultValues: {
+      email: '',
+      password: '',
+      termsAgreed: false,
+      privacyAgreed: false,
+    },
   });
 
   const next = searchParams.get('next') ?? '/dashboard';
 
   const onSubmit = handleSubmit(async (values) => {
     try {
+      /*
+       * 로그인에 동의 필드를 함께 보내면 서버의 whitelist 검증이 400을 낸다.
+       * 모드에 따라 본문을 따로 만든다.
+       */
+      const body =
+        mode === 'login'
+          ? { email: values.email, password: values.password }
+          : values;
+
       const { data } = await api.post<AuthResponse>(
         mode === 'login' ? '/auth/login' : '/auth/signup',
-        values,
+        body,
       );
 
       setToken(data.accessToken);
@@ -131,6 +148,51 @@ function LoginForm() {
               )}
             </Field>
 
+            {mode === 'signup' && (
+              <div className="flex flex-col gap-2 rounded-xl border border-slate-200/80 bg-slate-50/60 p-3.5">
+                <Consent
+                  id="terms"
+                  error={errors.termsAgreed?.message}
+                  {...register('termsAgreed', {
+                    required: '이용약관에 동의해야 가입할 수 있습니다.',
+                  })}
+                >
+                  <a
+                    href="/terms"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-blue-600 underline underline-offset-2"
+                  >
+                    이용약관
+                  </a>
+                  에 동의합니다 <span className="text-slate-500">(필수)</span>
+                </Consent>
+
+                <Consent
+                  id="privacy"
+                  error={errors.privacyAgreed?.message}
+                  {...register('privacyAgreed', {
+                    required: '개인정보 수집·이용에 동의해야 가입할 수 있습니다.',
+                  })}
+                >
+                  <a
+                    href="/privacy"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-blue-600 underline underline-offset-2"
+                  >
+                    개인정보 수집·이용
+                  </a>
+                  에 동의합니다 <span className="text-slate-500">(필수)</span>
+                </Consent>
+
+                <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+                  이름·연락처·생년월일·주소와 자기소개서 내용을 보관합니다.
+                  탈퇴하면 모두 삭제됩니다.
+                </p>
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={isSubmitting}
@@ -165,3 +227,43 @@ function LoginForm() {
     </main>
   );
 }
+
+/**
+ * 동의 체크박스 한 줄.
+ *
+ * 무엇에 동의하는지 링크로 열어볼 수 있어야 한다.
+ * 체크박스만 있고 읽을 문서가 없으면 동의를 받았다고 보기 어렵다.
+ */
+const Consent = forwardRef<
+  HTMLInputElement,
+  React.InputHTMLAttributes<HTMLInputElement> & {
+    id: string;
+    error?: string;
+    children: React.ReactNode;
+  }
+>(function Consent({ id, error, children, ...props }, ref) {
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="flex min-h-11 cursor-pointer items-center gap-2.5 text-sm text-slate-700"
+      >
+        <input
+          id={id}
+          ref={ref}
+          type="checkbox"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? `${id}-error` : undefined}
+          className="h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-2 focus:ring-blue-500/60"
+          {...props}
+        />
+        <span>{children}</span>
+      </label>
+      {error && (
+        <p id={`${id}-error`} className="pl-6.5 text-xs text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+});

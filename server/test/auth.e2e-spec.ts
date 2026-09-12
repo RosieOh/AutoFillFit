@@ -17,11 +17,20 @@ describe('Auth (통합)', () => {
   afterAll(closeTestApp);
   beforeEach(resetDatabase);
 
+  /** 가입 본문. 동의 두 가지가 없으면 400이므로 기본으로 넣는다. */
+  const signupBody = (over: Record<string, unknown> = {}) => ({
+    email: 'hong@example.com',
+    password: 'passw0rd123',
+    termsAgreed: true,
+    privacyAgreed: true,
+    ...over,
+  });
+
   describe('POST /auth/signup', () => {
     it('가입하면 토큰과 함께 USER 권한으로 만들어진다', async () => {
       const res = await http()
         .post('/auth/signup')
-        .send({ email: 'hong@example.com', password: 'passw0rd123' })
+        .send(signupBody({ email: 'hong@example.com' }))
         .expect(201);
 
       expect(res.body.accessToken).toEqual(expect.any(String));
@@ -35,7 +44,7 @@ describe('Auth (통합)', () => {
     it('비밀번호는 응답에 포함되지 않는다', async () => {
       const res = await http()
         .post('/auth/signup')
-        .send({ email: 'hong@example.com', password: 'passw0rd123' })
+        .send(signupBody({ email: 'hong@example.com' }))
         .expect(201);
 
       expect(JSON.stringify(res.body)).not.toContain('passw0rd123');
@@ -78,7 +87,7 @@ describe('Auth (통합)', () => {
 
       await http()
         .post('/auth/signup')
-        .send({ email: 'hong@example.com', password: 'passw0rd123' })
+        .send(signupBody({ email: 'hong@example.com' }))
         .expect(409);
     });
 
@@ -87,16 +96,16 @@ describe('Auth (통합)', () => {
 
       await http()
         .post('/auth/signup')
-        .send({ email: 'HONG@example.com', password: 'passw0rd123' })
+        .send(signupBody({ email: 'HONG@example.com' }))
         .expect(409);
     });
 
     it.each([
-      ['형식이 아닌 이메일', { email: 'not-an-email', password: 'passw0rd123' }],
-      ['짧은 비밀번호', { email: 'a@example.com', password: 'short' }],
-      ['숫자 없는 비밀번호', { email: 'a@example.com', password: 'onlyletters' }],
-      ['잘못된 전화번호', { email: 'a@example.com', password: 'passw0rd123', phone: 'abc' }],
-      ['잘못된 우편번호', { email: 'a@example.com', password: 'passw0rd123', zipCode: '123' }],
+      ['형식이 아닌 이메일', signupBody({ email: 'not-an-email' })],
+      ['짧은 비밀번호', signupBody({ email: 'a@example.com', password: 'short' })],
+      ['숫자 없는 비밀번호', signupBody({ email: 'a@example.com', password: 'onlyletters' })],
+      ['잘못된 전화번호', signupBody({ email: 'a@example.com', phone: 'abc' })],
+      ['잘못된 우편번호', signupBody({ email: 'a@example.com', zipCode: '123' })],
     ])('%s는 400', async (_label, body) => {
       await http().post('/auth/signup').send(body).expect(400);
     });
@@ -104,16 +113,56 @@ describe('Auth (통합)', () => {
     it('본문으로 관리자 권한을 주입할 수 없다', async () => {
       const res = await http()
         .post('/auth/signup')
-        .send({ email: 'evil@example.com', password: 'passw0rd123', role: 'ADMIN' })
+        .send(signupBody({ email: 'evil@example.com', role: 'ADMIN' }))
         .expect(400);
 
       expect(JSON.stringify(res.body.message)).toContain('role');
     });
 
+    /**
+     * 개인정보보호법 제15조(수집·이용 동의).
+     * 이 서비스는 이름·연락처·생년월일·주소에 자소서 전문까지 보관한다.
+     * 동의 없이 받으면 수집 근거가 코드에도 DB에도 남지 않는다.
+     */
+    it('동의 없이는 가입할 수 없다', async () => {
+      const res = await http()
+        .post('/auth/signup')
+        .send({ email: 'a@example.com', password: 'passw0rd123' })
+        .expect(400);
+
+      const message = JSON.stringify(res.body.message);
+      expect(message).toContain('termsAgreed');
+      expect(message).toContain('privacyAgreed');
+    });
+
+    it('둘 중 하나만 동의해도 거부한다', async () => {
+      await http()
+        .post('/auth/signup')
+        .send(signupBody({ email: 'a@example.com', privacyAgreed: false }))
+        .expect(400);
+
+      await http()
+        .post('/auth/signup')
+        .send(signupBody({ email: 'b@example.com', termsAgreed: false }))
+        .expect(400);
+    });
+
+    it('동의 시각과 문서 버전을 남긴다 — 나중에 증명할 수 있어야 한다', async () => {
+      await createUser({ email: 'hong@example.com' });
+
+      const stored = await getDataSource()
+        .getRepository(User)
+        .findOneOrFail({ where: { email: 'hong@example.com' } });
+
+      expect(stored.termsAgreedAt).toBeInstanceOf(Date);
+      expect(stored.privacyAgreedAt).toBeInstanceOf(Date);
+      expect(stored.policyVersion).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    });
+
     it('isActive도 주입할 수 없다', async () => {
       await http()
         .post('/auth/signup')
-        .send({ email: 'evil@example.com', password: 'passw0rd123', isActive: false })
+        .send(signupBody({ email: 'evil@example.com', isActive: false }))
         .expect(400);
     });
   });

@@ -25,7 +25,12 @@ interface AuthContextValue {
   me: MeResponse | null;
   isAdmin: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  /** 동의는 화면에서 실제로 받은 값을 넘겨야 한다. 기본값을 두지 않는다. */
+  signUp: (
+    email: string,
+    password: string,
+    consent: { termsAgreed: boolean; privacyAgreed: boolean },
+  ) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -70,8 +75,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   const authenticate = useCallback(
-    async (path: '/auth/login' | '/auth/signup', email: string, password: string) => {
-      const { data } = await api.post<AuthResponse>(path, { email, password });
+    async (
+      path: '/auth/login' | '/auth/signup',
+      email: string,
+      password: string,
+      /**
+       * 가입에만 붙는 필수 동의. 로그인에 함께 보내면 서버의 whitelist 검증이
+       * 400을 내므로 가입일 때만 실어 보낸다.
+       */
+      consent?: { termsAgreed: boolean; privacyAgreed: boolean },
+    ) => {
+      const { data } = await api.post<AuthResponse>(path, {
+        email,
+        password,
+        ...(consent ?? {}),
+      });
       await setToken(data.accessToken);
       setMe({ id: data.user.id, email: data.user.email, role: data.user.role });
       setState('authenticated');
@@ -85,7 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       me,
       isAdmin: me?.role === 'ADMIN',
       signIn: (email, password) => authenticate('/auth/login', email, password),
-      signUp: (email, password) => authenticate('/auth/signup', email, password),
+      signUp: (email, password, consent) =>
+        authenticate('/auth/signup', email, password, consent),
       signOut: async () => {
         await clearToken();
         setMe(null);

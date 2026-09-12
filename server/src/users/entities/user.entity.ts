@@ -43,6 +43,23 @@ export class User {
   password: string;
 
   /**
+   * 이용약관에 동의한 시각.
+   *
+   * 사용자가 "나는 주소·생년월일 수집에 동의한 적 없다"고 할 때
+   * 반박할 근거가 된다. 가입 경로에서만 채워진다.
+   */
+  @Column({ name: 'terms_agreed_at', type: 'timestamptz', nullable: true })
+  termsAgreedAt: Date | null;
+
+  /** 개인정보 수집·이용에 동의한 시각. */
+  @Column({ name: 'privacy_agreed_at', type: 'timestamptz', nullable: true })
+  privacyAgreedAt: Date | null;
+
+  /** 동의한 문서의 버전. 문구가 바뀌면 어느 판에 동의했는지가 달라진다. */
+  @Column({ name: 'policy_version', type: 'varchar', length: 32, nullable: true })
+  policyVersion: string | null;
+
+  /**
    * 연속 로그인 실패 횟수.
    *
    * 성공하면 0으로 돌아간다. IP 기준 제한만으로는 여러 IP를 돌려 쓰는

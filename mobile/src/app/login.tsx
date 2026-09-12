@@ -3,7 +3,7 @@ import { Button, Card, Field, Input } from '@/components/ui';
 import { toErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useRouter } from 'expo-router';
-import { LogIn, Zap } from 'lucide-react-native';
+import { Check, LogIn, Zap } from 'lucide-react-native';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import {
@@ -19,6 +19,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 interface LoginFormValues {
   email: string;
   password: string;
+  /** 가입 시에만 쓰는 필수 동의 (개인정보보호법 제15조) */
+  termsAgreed: boolean;
+  privacyAgreed: boolean;
 }
 
 export default function LoginScreen() {
@@ -32,7 +35,12 @@ export default function LoginScreen() {
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<LoginFormValues>({
-    defaultValues: { email: '', password: '' },
+    defaultValues: {
+      email: '',
+      password: '',
+      termsAgreed: false,
+      privacyAgreed: false,
+    },
   });
 
   const onSubmit = handleSubmit(async (values) => {
@@ -40,7 +48,10 @@ export default function LoginScreen() {
       if (mode === 'login') {
         await signIn(values.email.trim(), values.password);
       } else {
-        await signUp(values.email.trim(), values.password);
+        await signUp(values.email.trim(), values.password, {
+          termsAgreed: values.termsAgreed,
+          privacyAgreed: values.privacyAgreed,
+        });
       }
       router.replace('/(tabs)');
     } catch (error) {
@@ -136,6 +147,43 @@ export default function LoginScreen() {
               )}
             />
 
+            {mode === 'signup' ? (
+              <View className="gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+                <Controller
+                  control={control}
+                  name="termsAgreed"
+                  rules={{ required: '이용약관에 동의해야 가입할 수 있습니다.' }}
+                  render={({ field }) => (
+                    <ConsentRow
+                      checked={field.value}
+                      onToggle={() => field.onChange(!field.value)}
+                      label="이용약관에 동의합니다 (필수)"
+                      error={errors.termsAgreed?.message}
+                    />
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="privacyAgreed"
+                  rules={{
+                    required: '개인정보 수집·이용에 동의해야 가입할 수 있습니다.',
+                  }}
+                  render={({ field }) => (
+                    <ConsentRow
+                      checked={field.value}
+                      onToggle={() => field.onChange(!field.value)}
+                      label="개인정보 수집·이용에 동의합니다 (필수)"
+                      error={errors.privacyAgreed?.message}
+                    />
+                  )}
+                />
+                <Text className="text-xs leading-relaxed text-slate-500">
+                  이름·연락처·생년월일·주소와 자기소개서 내용을 보관합니다.
+                  탈퇴하면 모두 삭제됩니다.
+                </Text>
+              </View>
+            ) : null}
+
             <Button
               label={mode === 'login' ? '로그인' : '가입하고 시작하기'}
               onPress={() => void onSubmit()}
@@ -161,5 +209,45 @@ export default function LoginScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * 동의 한 줄.
+ *
+ * 스위치 대신 체크박스 모양을 쓴다. 스위치는 '설정 켜기/끄기'로 읽히고
+ * 동의는 한 번 선택하는 행위라서, 형태가 의미를 잘못 전달한다.
+ */
+function ConsentRow({
+  checked,
+  onToggle,
+  label,
+  error,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  label: string;
+  error?: string;
+}) {
+  return (
+    <View>
+      <Pressable
+        onPress={onToggle}
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked }}
+        accessibilityLabel={label}
+        className="min-h-11 flex-row items-center gap-2.5"
+      >
+        <View
+          className={`h-5 w-5 items-center justify-center rounded border ${
+            checked ? 'border-blue-600 bg-blue-600' : 'border-slate-300 bg-white'
+          }`}
+        >
+          {checked ? <Check size={14} color="#ffffff" /> : null}
+        </View>
+        <Text className="flex-1 text-sm text-slate-700">{label}</Text>
+      </Pressable>
+      {error ? <Text className="text-xs text-rose-600">{error}</Text> : null}
+    </View>
   );
 }
