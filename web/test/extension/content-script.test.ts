@@ -526,3 +526,420 @@ describe('칸 이름 표시', () => {
     expect(toastText()).not.toContain('(500');
   });
 });
+
+/**
+ * 전체 항목 자동입력.
+ *
+ * 대시보드는 4개 섹션 100점을 채우게 하는데, 확장에는 오랫동안
+ * name·email·phone·coverLetter 4개만 전달됐다. 서버가 이미 내려주던
+ * birthdate·address·zipCode조차 브리지에서 빠졌고, 학력 20점·경력 20점·
+ * 자격증 10점은 전달 경로 자체가 없었다.
+ */
+const FULL_PROFILE = {
+  ...PROFILE,
+  birthdate: '1995-03-02',
+  address: '서울시 강남구 테헤란로 123',
+  zipCode: '06236',
+};
+
+const EDUCATION = [
+  {
+    schoolName: '한국대학교',
+    major: '컴퓨터공학',
+    degree: 'BACHELOR',
+    status: 'GRADUATED',
+    gpa: '3.85',
+    gpaScale: '4.50',
+    admissionDate: '2014-03',
+    graduationDate: '2018-02',
+  },
+];
+
+const CAREERS = [
+  {
+    companyName: '로지소프트',
+    department: '플랫폼팀',
+    jobTitle: '백엔드 개발',
+    position: '주임',
+    joinDate: '2020-01',
+    leaveDate: null,
+    isCurrent: true,
+    mainTasks: '결제 API',
+  },
+];
+
+const CERTIFICATES = [
+  { name: '정보처리기사', issuer: '한국산업인력공단', acquiredAt: '2019-08-16', score: null },
+];
+
+const fullSync = (over: Record<string, unknown> = {}) => ({
+  syncedProfile: FULL_PROFILE,
+  syncedAt: '2026-09-10T00:00:00.000Z',
+  syncedEssays: ESSAYS,
+  syncedEducation: EDUCATION,
+  syncedCareers: CAREERS,
+  syncedCertificates: CERTIFICATES,
+  ...over,
+});
+
+describe('인적사항 전체 입력', () => {
+  it('생년월일·주소·우편번호도 채운다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="a">생년월일</label><input id="a"></div>
+        <div><label for="b">주소</label><input id="b"></div>
+        <div><label for="c">우편번호</label><input id="c"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#a')).toBe('1995-03-02');
+    expect(value('#b')).toBe('서울시 강남구 테헤란로 123');
+    expect(value('#c')).toBe('06236');
+  });
+
+  it('우편번호 칸에 주소를 넣지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><div><label for="z">우편번호</label><input id="z"></div></form>';
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#z')).toBe('06236');
+  });
+});
+
+describe('학력·경력·자격증 입력', () => {
+  it('학교·전공·학점·졸업년월을 채운다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="s">학교명</label><input id="s"></div>
+        <div><label for="m">전공</label><input id="m"></div>
+        <div><label for="g">학점</label><input id="g"></div>
+        <div><label for="gd">졸업년월</label><input id="gd"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#s')).toBe('한국대학교');
+    expect(value('#m')).toBe('컴퓨터공학');
+    expect(value('#g')).toBe('3.85');
+    expect(value('#gd')).toBe('2018-02');
+  });
+
+  it('회사·직무·입사년월을 채운다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="c">회사명</label><input id="c"></div>
+        <div><label for="j">직무</label><input id="j"></div>
+        <div><label for="d">입사년월</label><input id="d"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#c')).toBe('로지소프트');
+    expect(value('#j')).toBe('백엔드 개발');
+    expect(value('#d')).toBe('2020-01');
+  });
+
+  it('자격증명과 발급기관을 구분해 채운다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="n">자격증명</label><input id="n"></div>
+        <div><label for="i">발급기관</label><input id="i"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#n')).toBe('정보처리기사');
+    expect(value('#i')).toBe('한국산업인력공단');
+  });
+
+  it('회사명 칸에 학교명을 넣지 않는다 — 되돌릴 수 없는 오입력이다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="s">학교명</label><input id="s"></div>
+        <div><label for="c">회사명</label><input id="c"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#s')).toBe('한국대학교');
+    expect(value('#c')).toBe('로지소프트');
+  });
+});
+
+/**
+ * 선택형 필드.
+ *
+ * 한국 지원서의 학력구분·졸업상태·성별·병역은 대부분 select와 radio다.
+ * 예전에는 querySelectorAll('input, textarea')만 훑어 select를 아예 보지 않았고,
+ * SKIP_TYPES가 radio를 막았다. 20칸짜리 지원서에서 4칸만 차던 이유다.
+ */
+const selected = (selector: string) => {
+  const el = document.querySelector<HTMLSelectElement>(selector);
+  return el ? el.options[el.selectedIndex]?.textContent ?? null : null;
+};
+
+describe('select 입력', () => {
+  it('저장된 코드(BACHELOR)를 화면의 한국어 보기와 맞춘다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <label for="d">최종학력</label>
+        <select id="d">
+          <option value="">선택하세요</option>
+          <option value="HS">고등학교 졸업</option>
+          <option value="BA">대학교(4년)</option>
+          <option value="MA">대학원(석사)</option>
+        </select>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(selected('#d')).toBe('대학교(4년)');
+  });
+
+  it('졸업과 졸업예정을 혼동하지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <label for="s">졸업구분</label>
+        <select id="s">
+          <option value="">선택</option>
+          <option value="1">재학</option>
+          <option value="2">졸업예정</option>
+          <option value="3">졸업</option>
+        </select>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // GRADUATED인데 '졸업예정'을 고르면 거짓이 된다
+    expect(selected('#s')).toBe('졸업');
+  });
+
+  it('졸업예정 학력은 졸업예정을 고른다', async () => {
+    installChrome(
+      fullSync({ syncedEducation: [{ ...EDUCATION[0], status: 'EXPECTED' }] }),
+    );
+    document.body.innerHTML = `
+      <form>
+        <label for="s">졸업구분</label>
+        <select id="s">
+          <option value="">선택</option>
+          <option value="2">졸업예정</option>
+          <option value="3">졸업</option>
+        </select>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(selected('#s')).toBe('졸업예정');
+  });
+
+  it('맞는 보기가 없으면 고르지 않는다 — 틀린 학력보다 빈 칸이 낫다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <label for="d">최종학력</label>
+        <select id="d">
+          <option value="">선택하세요</option>
+          <option value="x">해당 없음</option>
+          <option value="y">기타</option>
+        </select>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector<HTMLSelectElement>('#d')?.value).toBe('');
+  });
+
+  it('이미 골라진 select는 덮어쓰지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <label for="d">최종학력</label>
+        <select id="d">
+          <option value="BA">대학교(4년)</option>
+          <option value="MA" selected>대학원(석사)</option>
+        </select>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(selected('#d')).toBe('대학원(석사)');
+  });
+});
+
+describe('radio 입력', () => {
+  const checkedLabel = (name: string) => {
+    const el = document.querySelector<HTMLInputElement>(
+      `input[name="${name}"]:checked`,
+    );
+    return el ? el.value : null;
+  };
+
+  it('fieldset의 질문을 읽어 알맞은 보기를 고른다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>최종학력</legend>
+          <label><input type="radio" name="edu" value="고등학교"> 고등학교</label>
+          <label><input type="radio" name="edu" value="대학교"> 대학교</label>
+          <label><input type="radio" name="edu" value="대학원"> 대학원</label>
+        </fieldset>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(checkedLabel('edu')).toBe('대학교');
+  });
+
+  it('이미 선택된 그룹은 건드리지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>최종학력</legend>
+          <label><input type="radio" name="edu" value="대학교"> 대학교</label>
+          <label><input type="radio" name="edu" value="대학원" checked> 대학원</label>
+        </fieldset>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(checkedLabel('edu')).toBe('대학원');
+  });
+
+  it('질문을 알 수 없는 그룹은 고르지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>수신 동의</legend>
+          <label><input type="radio" name="agree" value="동의"> 동의</label>
+          <label><input type="radio" name="agree" value="거부"> 거부</label>
+        </fieldset>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(checkedLabel('agree')).toBeNull();
+  });
+});
+
+/**
+ * 값 형식 정규화.
+ *
+ * 서버는 전화번호를 숫자만으로 저장하는데 지원서는 대부분 하이픈을 요구하거나
+ * 입력 중 자동으로 붙인다. 형식이 어긋나면 유효성 검사에서 반려되거나,
+ * 마스킹으로 값이 달라져 확장이 "채우지 못했다"고 잘못 보고한다.
+ */
+describe('값 형식 맞추기', () => {
+  it('하이픈을 요구하는 칸에는 하이픈을 넣는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><label for="p">연락처</label><input id="p" placeholder="010-0000-0000"></form>';
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#p')).toBe('010-1234-5678');
+  });
+
+  it('힌트가 없으면 숫자만 넣는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><label for="p">연락처</label><input id="p"></form>';
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#p')).toBe('01012345678');
+  });
+
+  it('구분자 없이 8자리로 받는 생년월일 칸', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><label for="b">생년월일</label><input id="b" maxlength="8" placeholder="19950302"></form>';
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#b')).toBe('19950302');
+  });
+
+  it('점으로 구분하는 칸', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><label for="b">생년월일</label><input id="b" placeholder="YYYY.MM.DD"></form>';
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#b')).toBe('1995.03.02');
+  });
+
+  it('마스킹이 값을 바꿔도 채운 것으로 센다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><label for="p">연락처</label><input id="p"></form>';
+
+    await loadContentScript();
+
+    // 입력 즉시 하이픈을 붙이는 사이트를 흉내낸다
+    const input = document.getElementById('p') as HTMLInputElement;
+    input.addEventListener('input', () => {
+      const d = input.value.replace(/[^0-9]/g, '');
+      if (d.length === 11) {
+        input.value = `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`;
+      }
+    });
+
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#p')).toBe('010-1234-5678');
+    // 예전에는 문자열이 달라졌다는 이유로 실패로 세어 '찾지 못했습니다'를 띄웠다
+    expect(toastText()).toContain('전화번호 1');
+  });
+});

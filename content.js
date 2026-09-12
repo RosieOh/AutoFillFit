@@ -21,6 +21,9 @@
     name: '',
     email: '',
     phone: '',
+    birthdate: '',
+    address: '',
+    zipCode: '',
     coverLetter: ''
   };
 
@@ -35,6 +38,14 @@
    */
   let essays = [];
 
+  /**
+   * 학력·경력·자격증. 전부 최신순이라 [0]이 최종학력·현재 직장이다.
+   * 대시보드가 70점을 배정하는 내용인데, 여기에 없으면 지원서에 한 글자도 못 넣는다.
+   */
+  let education = [];
+  let careers = [];
+  let certificates = [];
+
   // 이미 값이 채워진 필드를 덮어쓸지 여부
   const OVERWRITE_EXISTING = false;
 
@@ -47,13 +58,19 @@
 
       // 대시보드가 넘겨준 값이 있으면 그것을 쓰고, 없으면 sync/기본값으로 내려간다.
       chrome.storage.local.get(
-        ['syncedProfile', 'syncedAt', 'syncedEssays'],
+        [
+          'syncedProfile', 'syncedAt', 'syncedEssays',
+          'syncedEducation', 'syncedCareers', 'syncedCertificates'
+        ],
         (local) => {
         if (chrome.runtime.lastError) return;
 
-        essays = Array.isArray(local && local.syncedEssays)
-          ? local.syncedEssays
-          : [];
+        const list = (value) => (Array.isArray(value) ? value : []);
+
+        essays = list(local && local.syncedEssays);
+        education = list(local && local.syncedEducation);
+        careers = list(local && local.syncedCareers);
+        certificates = list(local && local.syncedCertificates);
 
         if (local && local.syncedProfile) {
           profile = { ...DEFAULT_PROFILE, ...local.syncedProfile };
@@ -97,14 +114,19 @@
             profile = { ...DEFAULT_PROFILE };
             hasSyncedProfile = false;
             essays = [];
+            education = [];
+            careers = [];
+            certificates = [];
           }
         }
 
-        if (changes.syncedEssays) {
-          essays = Array.isArray(changes.syncedEssays.newValue)
-            ? changes.syncedEssays.newValue
-            : [];
-        }
+        const listOf = (change) =>
+          Array.isArray(change.newValue) ? change.newValue : [];
+
+        if (changes.syncedEssays) essays = listOf(changes.syncedEssays);
+        if (changes.syncedEducation) education = listOf(changes.syncedEducation);
+        if (changes.syncedCareers) careers = listOf(changes.syncedCareers);
+        if (changes.syncedCertificates) certificates = listOf(changes.syncedCertificates);
 
         if (changes.syncedAt) syncedAt = changes.syncedAt.newValue || null;
       });
@@ -133,10 +155,125 @@
       key: 'name',
       test: /(^|[^a-z])(name|username|user[-_ ]?name|fullname|full[-_ ]?name|applicant|성명|이름|지원자)/i,
       // 이름이 아닌 'name' 계열 오탐 차단
-      exclude: /(company|corp|school|univ|file|card|nickname|domain|account|bank|project|team|product|회사|학교|파일|은행)/i,
+      exclude: /(company|corp|school|univ|file|card|nickname|domain|account|bank|project|team|product|major|degree|certificate|회사|학교|파일|은행|전공|자격)/i,
       value: () => profile.name
+    },
+
+    /* --- 인적사항 나머지 --- */
+    {
+      key: 'zipCode',
+      // 주소보다 먼저 본다. '우편번호'에는 '주소'가 없지만 'address'는 겹칠 수 있다.
+      test: /(zip|postal|post[-_ ]?code|우편\s?번호|우편)/i,
+      value: () => profile.zipCode
+    },
+    {
+      key: 'address',
+      test: /(address|addr|주소|거주지|소재지)/i,
+      exclude: /(e-?mail|이메일|메일|ip[-_ ]?address|zip|postal|우편)/i,
+      value: () => profile.address
+    },
+    {
+      key: 'birthdate',
+      test: /(birth|생년월일|생일|출생)/i,
+      exclude: /(year|month|day|년|월|일자)$/i,
+      value: () => profile.birthdate
+    },
+
+    /* --- 학력 (최종학력이 첫 항목) --- */
+    {
+      key: 'schoolName',
+      test: /(school|univ|college|대학교|대학원|학교명|출신\s?학교|학교)/i,
+      exclude: /(중학교|초등학교|major|전공|학과)/i,
+      value: () => firstOf(education, 'schoolName')
+    },
+    {
+      key: 'major',
+      test: /(major|전공|학과(?!장))/i,
+      value: () => firstOf(education, 'major')
+    },
+    {
+      key: 'gpa',
+      test: /(gpa|학점|평점)/i,
+      exclude: /(만점|기준|scale)/i,
+      value: () => firstOf(education, 'gpa')
+    },
+    {
+      key: 'gpaScale',
+      test: /(gpa[-_ ]?scale|학점\s?만점|만점\s?기준|만점)/i,
+      value: () => firstOf(education, 'gpaScale')
+    },
+    {
+      key: 'graduationDate',
+      test: /(graduat|졸업\s?(년월|일자|년도|연도|일)|졸업)/i,
+      exclude: /(구분|상태|여부|status)/i,
+      value: () => firstOf(education, 'graduationDate')
+    },
+    {
+      key: 'admissionDate',
+      test: /(admission|enroll|입학\s?(년월|일자|년도|연도)?|입학)/i,
+      value: () => firstOf(education, 'admissionDate')
+    },
+
+    /* --- 경력 (재직 중인 곳이 첫 항목) --- */
+    {
+      key: 'companyName',
+      test: /(company|employer|근무처|직장|회사명|회사)/i,
+      exclude: /(school|univ|학교)/i,
+      value: () => firstOf(careers, 'companyName')
+    },
+    {
+      key: 'department',
+      test: /(department|부서|소속)/i,
+      exclude: /(학과|전공)/i,
+      value: () => firstOf(careers, 'department')
+    },
+    {
+      key: 'jobTitle',
+      test: /(job[-_ ]?title|job[-_ ]?role|직무|직종|담당\s?업무)/i,
+      exclude: /(주요\s?업무|상세)/i,
+      value: () => firstOf(careers, 'jobTitle')
+    },
+    {
+      key: 'position',
+      test: /(position|직급|직위)/i,
+      value: () => firstOf(careers, 'position')
+    },
+    {
+      key: 'joinDate',
+      test: /(join|hire|입사\s?(년월|일자)?|입사)/i,
+      value: () => firstOf(careers, 'joinDate')
+    },
+    {
+      key: 'leaveDate',
+      test: /(leave[-_ ]?date|resign|퇴사\s?(년월|일자)?|퇴사)/i,
+      value: () => firstOf(careers, 'leaveDate')
+    },
+
+    /* --- 자격증 (취득일 최신순) --- */
+    {
+      key: 'certificateName',
+      test: /(certificat|license|자격증(?!\s?번호)|자격\s?사항)/i,
+      exclude: /(발급|기관|issuer|취득|번호)/i,
+      value: () => firstOf(certificates, 'name')
+    },
+    {
+      key: 'certificateIssuer',
+      test: /(issuer|발급\s?기관|시행\s?기관|발행처)/i,
+      value: () => firstOf(certificates, 'issuer')
+    },
+    {
+      key: 'certificateAcquiredAt',
+      test: /(취득\s?(일자|일)?|acquired)/i,
+      value: () => firstOf(certificates, 'acquiredAt')
     }
   ];
+
+  /** 목록의 첫 항목에서 값을 꺼낸다. 비어 있으면 빈 문자열 — 채우지 않는다는 뜻이다. */
+  function firstOf(list, key) {
+    const item = Array.isArray(list) && list.length > 0 ? list[0] : null;
+    const value = item ? item[key] : null;
+    return value == null ? '' : String(value);
+  }
 
   // 자소서 / 경력 등 장문 입력 판별
   const LONG_TEXT_HINT = /(cover[-_ ]?letter|self[-_ ]?introduction|motivation|personal[-_ ]?statement|자기소개|자소서|지원\s?동기|입사\s?후\s?포부)/i;
@@ -235,6 +372,149 @@
     return null;
   }
 
+
+  /* ------------------------------------------------------------------ *
+   * 4.2 선택형 필드 — select / radio
+   *
+   * 한국 지원서의 학력구분·졸업상태·성별·병역은 대부분 select와 radio다.
+   * 저장값은 코드(BACHELOR)인데 화면에는 한국어(학사, 대학교(4년))로 적혀 있어
+   * 문자열 비교로는 절대 맞지 않는다. 코드마다 실제로 쓰이는 표현을 적어 둔다.
+   * ------------------------------------------------------------------ */
+
+  const CHOICE_TERMS = {
+    degree: {
+      HIGH_SCHOOL: ['고등학교', '고졸', '고교', 'high school'],
+      ASSOCIATE: ['전문학사', '전문대', '초대졸', '2년제', '3년제', 'associate'],
+      BACHELOR: ['학사', '대학교', '대졸', '4년제', 'bachelor', 'university'],
+      MASTER: ['석사', '대학원', 'master'],
+      DOCTOR: ['박사', 'doctor', 'phd']
+    },
+    status: {
+      GRADUATED: ['졸업'],
+      ENROLLED: ['재학'],
+      LEAVE: ['휴학'],
+      DROPPED: ['중퇴', '자퇴', '중도포기'],
+      EXPECTED: ['졸업예정', '졸업 예정', '예정']
+    }
+  };
+
+  /**
+   * 보기 하나와 저장값의 적합도.
+   *
+   * '졸업'과 '졸업예정'은 서로를 포함한다. 포함만 보면 GRADUATED가
+   * '졸업예정' 보기를 골라 버리므로, 정확히 같은 경우를 가장 높게 둔다.
+   */
+  function scoreChoice(optionText, terms) {
+    const target = normalize(optionText);
+    if (!target) return 0;
+
+    let best = 0;
+    for (const term of terms) {
+      const t = normalize(term);
+      if (!t) continue;
+      if (target === t) best = Math.max(best, 100);
+      else if (target.indexOf(t) === 0) best = Math.max(best, 60);
+      else if (target.indexOf(t) !== -1) best = Math.max(best, 30);
+    }
+    return best;
+  }
+
+  /** 저장값(코드 또는 자유 문자열)에 대응하는 표현 목록 */
+  function termsFor(kind, value) {
+    const dict = CHOICE_TERMS[kind];
+    const mapped = dict && dict[value];
+    // 사전에 없으면 값 자체를 표현으로 쓴다 (자유 입력 항목).
+    return mapped && mapped.length ? mapped.concat([value]) : [String(value)];
+  }
+
+  /** select에서 고를 option을 찾는다. 확신이 없으면 null. */
+  function pickOption(select, kind, value) {
+    if (!value) return null;
+
+    const terms = termsFor(kind, value);
+    let best = null;
+    let bestScore = 0;
+
+    for (const option of Array.from(select.options)) {
+      // '선택하세요' 같은 빈 보기는 건너뛴다.
+      if (!option.value && !option.textContent.trim()) continue;
+      const score = Math.max(
+        scoreChoice(option.textContent, terms),
+        scoreChoice(option.value, terms)
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        best = option;
+      }
+    }
+
+    return bestScore >= 60 ? best : null;
+  }
+
+  /** 라디오 그룹에서 고를 항목을 찾는다. 확신이 없으면 null. */
+  function pickRadio(group, kind, value) {
+    if (!value) return null;
+
+    const terms = termsFor(kind, value);
+    let best = null;
+    let bestScore = 0;
+
+    for (const input of group) {
+      const score = Math.max(
+        scoreChoice(getLabelText(input), terms),
+        scoreChoice(input.value, terms)
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        best = input;
+      }
+    }
+
+    return bestScore >= 60 ? best : null;
+  }
+
+  /**
+   * 선택형 칸에 넣을 값을 정한다.
+   * kind는 CHOICE_TERMS의 사전 이름이고, 사전에 없는 항목은 값 그대로 비교한다.
+   */
+  function resolveChoice(haystack) {
+    if (/(최종\s?학력|학력\s?구분|학위|degree)/i.test(haystack)) {
+      return { key: 'degree', kind: 'degree', value: firstOf(education, 'degree') };
+    }
+    if (/(졸업\s?(구분|상태|여부)|재학\s?여부|status)/i.test(haystack)) {
+      return { key: 'status', kind: 'status', value: firstOf(education, 'status') };
+    }
+
+    // 사전이 없는 선택형은 일반 규칙을 그대로 쓴다 (학교명·전공 select 등).
+    for (const rule of RULES) {
+      if (rule.exclude && rule.exclude.test(haystack)) continue;
+      if (rule.test.test(haystack)) {
+        return { key: rule.key, kind: null, value: rule.value() };
+      }
+    }
+    return null;
+  }
+
+  /** select / radio에 값을 넣고, 실제로 반영됐는지 돌려준다. */
+  function fillChoice(el, option) {
+    if (el.tagName.toLowerCase() === 'select') {
+      el.focus();
+      el.value = option.value;
+      if (el.value !== option.value) el.selectedIndex = option.index;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.blur();
+      return el.value === option.value || el.selectedIndex === option.index;
+    }
+
+    option.focus();
+    option.checked = true;
+    option.dispatchEvent(new Event('click', { bubbles: true }));
+    option.dispatchEvent(new Event('input', { bubbles: true }));
+    option.dispatchEvent(new Event('change', { bubbles: true }));
+    option.blur();
+    return option.checked;
+  }
 
   /* ------------------------------------------------------------------ *
    * 4.5 자소서 문항 매칭
@@ -402,19 +682,109 @@
     if (el.closest('#autofill-fit-root')) return false;   // 확장 UI 자신 제외
     if (el.disabled || el.readOnly) return false;
 
-    if (el.tagName.toLowerCase() === 'input') {
+    const tag = el.tagName.toLowerCase();
+
+    if (tag === 'input') {
       const type = (el.getAttribute('type') || 'text').toLowerCase();
+      // radio는 그룹 단위로 따로 처리하므로 여기서는 막는다.
       if (SKIP_TYPES.has(type)) return false;
     }
 
-    // 화면에 보이지 않는 필드 제외
-    const style = window.getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    if (el.offsetParent === null && style.position !== 'fixed') return false;
+    if (!isVisible(el)) return false;
 
     if (!OVERWRITE_EXISTING && el.value && el.value.trim() !== '') return false;
 
     return true;
+  }
+
+  function isVisible(el) {
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    return el.offsetParent !== null || style.position === 'fixed';
+  }
+
+  /**
+   * select가 채울 수 있는 상태인가.
+   *
+   * select는 값이 비어 있어도 selectedIndex가 0('선택하세요')이라
+   * el.value 검사만으로는 "이미 고른 것"과 구분되지 않는다.
+   * 실제로 의미 있는 값이 골라져 있을 때만 건너뛴다.
+   */
+  function isFillableSelect(el) {
+    if (el.closest('#autofill-fit-root')) return false;
+    if (el.disabled) return false;
+    if (!isVisible(el)) return false;
+
+    if (!OVERWRITE_EXISTING) {
+      const chosen = el.options[el.selectedIndex];
+      const hasValue = el.value && el.value.trim() !== '';
+      const looksPlaceholder =
+        !chosen || /^(선택|선택하세요|선택해\s?주세요|choose|select)/i.test(
+          (chosen.textContent || '').trim()
+        );
+      if (hasValue && !looksPlaceholder) return false;
+    }
+
+    return true;
+  }
+
+  /** 라디오 그룹을 name 기준으로 모은다. 이미 골라져 있으면 제외한다. */
+  function collectRadioGroups() {
+    const groups = new Map();
+
+    for (const el of Array.from(document.querySelectorAll('input[type="radio"]'))) {
+      if (el.closest('#autofill-fit-root')) continue;
+      if (el.disabled) continue;
+      if (!isVisible(el)) continue;
+
+      const name = el.name || '';
+      if (!name) continue;
+
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(el);
+    }
+
+    const result = [];
+    groups.forEach((inputs, name) => {
+      if (!OVERWRITE_EXISTING && inputs.some((input) => input.checked)) return;
+      result.push({ name: name, inputs: inputs });
+    });
+    return result;
+  }
+
+  /**
+   * 라디오 그룹이 무엇을 묻는지.
+   *
+   * 개별 라디오의 라벨은 보기('남','여')라서 질문을 알 수 없다.
+   * 묶는 fieldset의 legend나 공통 조상의 텍스트에서 질문을 찾아야 한다.
+   */
+  function radioGroupHaystack(group) {
+    const first = group.inputs[0];
+    const parts = [group.name];
+
+    const fieldset = first.closest('fieldset');
+    const legend = fieldset ? fieldset.querySelector('legend') : null;
+    if (legend) parts.push(legend.textContent || '');
+
+    const labelled = first.getAttribute('aria-labelledby');
+    if (labelled) {
+      const node = document.getElementById(labelled);
+      if (node) parts.push(node.textContent || '');
+    }
+
+    // 그룹 전체를 감싸면서 다른 입력은 포함하지 않는 조상의 텍스트
+    let scope = first.parentElement;
+    for (let depth = 0; scope && depth < 4; depth++) {
+      if (group.inputs.every((input) => scope.contains(input))) {
+        const clone = scope.cloneNode(true);
+        clone.querySelectorAll('input, select, textarea, label').forEach((n) => n.remove());
+        const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+        if (text) { parts.push(text); break; }
+      }
+      scope = scope.parentElement;
+    }
+
+    return parts.join(' ').toLowerCase();
   }
 
   /* ------------------------------------------------------------------ *
@@ -435,6 +805,88 @@
     } else {
       el.value = value;
     }
+  }
+
+  /** 이 칸이 기대하는 형식을 읽는다 — placeholder·pattern·maxlength가 단서다. */
+  function fieldFormatHints(el) {
+    return [
+      el.getAttribute('placeholder') || '',
+      el.getAttribute('pattern') || '',
+      el.getAttribute('title') || '',
+      el.getAttribute('data-format') || ''
+    ].join(' ');
+  }
+
+  const DATE_KEYS = new Set([
+    'birthdate', 'graduationDate', 'admissionDate',
+    'joinDate', 'leaveDate', 'certificateAcquiredAt'
+  ]);
+
+  /**
+   * 저장값을 이 칸의 형식에 맞춘다.
+   *
+   * 서버는 전화번호를 숫자만으로 저장하는데 지원서는 대부분 하이픈을 요구하거나
+   * 입력 중 자동으로 붙인다. 형식을 맞추지 않으면 유효성 검사에서 반려되거나,
+   * 마스킹 때문에 값이 달라져 확장이 실패로 센다.
+   */
+  function formatForField(el, key, value) {
+    const text = String(value);
+
+    if (key === 'phone') {
+      const digits = text.replace(/[^0-9]/g, '');
+      const hints = fieldFormatHints(el);
+      const max = Number(el.getAttribute('maxlength'));
+      const wantsHyphen =
+        /-/.test(hints) || (Number.isFinite(max) && max >= 12 && max <= 13);
+
+      if (!wantsHyphen) return digits;
+      if (digits.length === 11) {
+        return digits.slice(0, 3) + '-' + digits.slice(3, 7) + '-' + digits.slice(7);
+      }
+      if (digits.length === 10) {
+        return digits.slice(0, 3) + '-' + digits.slice(3, 6) + '-' + digits.slice(6);
+      }
+      return digits;
+    }
+
+    if (DATE_KEYS.has(key)) {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      const parts = text.split('-');            // YYYY-MM 또는 YYYY-MM-DD
+
+      if (type === 'date') return parts.length === 3 ? text : text;
+      if (type === 'month') return parts.slice(0, 2).join('-');
+
+      const hints = fieldFormatHints(el);
+      const max = Number(el.getAttribute('maxlength'));
+
+      // 구분자 없이 받는 칸 (YYYYMMDD)
+      if (/^\s*$/.test(hints) === false && /[0-9]{4}[0-9]{2}/.test(hints.replace(/[^0-9]/g, ''))) {
+        return parts.join('');
+      }
+      if (Number.isFinite(max) && (max === 8 || max === 6)) return parts.join('');
+      if (hints.indexOf('.') !== -1) return parts.join('.');
+      if (hints.indexOf('/') !== -1) return parts.join('/');
+
+      return text;
+    }
+
+    return text;
+  }
+
+  /**
+   * 값이 실제로 남았는가.
+   *
+   * 하이픈을 자동으로 붙이는 마스킹 칸은 넣은 문자열과 el.value가 달라진다.
+   * 문자열이 정확히 같은지만 보면, 제대로 채워졌는데도 실패로 세어
+   * '채울 수 있는 입력창을 찾지 못했습니다'를 띄운다.
+   */
+  function valueLanded(el, value) {
+    const actual = el.value == null ? '' : String(el.value);
+    if (actual === value) return true;
+    if (actual.trim() === '') return false;
+
+    const digitsOf = (text) => text.replace(/[^0-9a-z가-힣]/gi, '');
+    return digitsOf(actual) === digitsOf(value);
   }
 
   function fillField(el, value) {
@@ -546,10 +998,47 @@
       if (!matched || matched.key === 'coverLetter') continue;
       if (matched.value == null || matched.value === '') continue;
 
-      fillField(el, matched.value);
-      if (el.value !== matched.value) continue;
+      const value = formatForField(el, matched.key, matched.value);
+      fillField(el, value);
+      if (!valueLanded(el, value)) continue;
 
       highlight(el);
+      summary[matched.key] = (summary[matched.key] || 0) + 1;
+      filled += 1;
+    }
+
+    /*
+     * 3패스 — 선택형 칸.
+     * 한국 지원서의 학력구분·졸업상태·성별·병역은 대부분 select와 radio다.
+     * 여기를 비워 두면 필수값 누락으로 제출이 반려된다.
+     */
+    for (const el of Array.from(document.querySelectorAll('select'))) {
+      if (!isFillableSelect(el)) continue;
+
+      const matched = resolveChoice(buildHaystack(el));
+      if (!matched || !matched.value) continue;
+
+      const option = pickOption(el, matched.kind, matched.value);
+      // 확신이 없으면 고르지 않는다. 틀린 학력이 들어간 지원서는 빈 칸보다 나쁘다.
+      if (!option) continue;
+
+      if (!fillChoice(el, option)) continue;
+
+      highlight(el);
+      summary[matched.key] = (summary[matched.key] || 0) + 1;
+      filled += 1;
+    }
+
+    for (const group of collectRadioGroups()) {
+      const matched = resolveChoice(radioGroupHaystack(group));
+      if (!matched || !matched.value) continue;
+
+      const input = pickRadio(group.inputs, matched.kind, matched.value);
+      if (!input) continue;
+
+      if (!fillChoice(input, input)) continue;
+
+      highlight(input.closest('label') || input);
       summary[matched.key] = (summary[matched.key] || 0) + 1;
       filled += 1;
     }
@@ -642,6 +1131,26 @@
     name: '이름',
     email: '이메일',
     phone: '전화번호',
+    birthdate: '생년월일',
+    address: '주소',
+    zipCode: '우편번호',
+    schoolName: '학교',
+    major: '전공',
+    degree: '학력',
+    status: '졸업구분',
+    gpa: '학점',
+    gpaScale: '학점만점',
+    graduationDate: '졸업년월',
+    admissionDate: '입학년월',
+    companyName: '회사',
+    department: '부서',
+    jobTitle: '직무',
+    position: '직급',
+    joinDate: '입사년월',
+    leaveDate: '퇴사년월',
+    certificateName: '자격증',
+    certificateIssuer: '발급기관',
+    certificateAcquiredAt: '취득일',
     coverLetter: '자기소개서'
   };
 
@@ -862,10 +1371,16 @@
     // 지우지 않으면 같은 브라우저의 다음 사용자에게 넘어간다.
     if (event.data.type === 'CLEAR') {
       chrome.storage.local.remove(
-        ['syncedProfile', 'syncedEssays', 'syncedAt', 'fillHistory'],
+        [
+          'syncedProfile', 'syncedEssays', 'syncedAt', 'fillHistory',
+          'syncedEducation', 'syncedCareers', 'syncedCertificates'
+        ],
         () => {
           profile = { ...DEFAULT_PROFILE };
           essays = [];
+          education = [];
+          careers = [];
+          certificates = [];
           hasSyncedProfile = false;
           syncedAt = null;
           reply({ type: 'CLEARED' });
@@ -877,14 +1392,20 @@
     // 대시보드가 최신 이력서를 넘겨준다. 토큰은 받지 않는다 — 확장에 둘 이유가 없다.
     if (event.data.type === 'SYNC' && event.data.profile) {
       const at = new Date().toISOString();
-      const incomingEssays = Array.isArray(event.data.essays)
-        ? event.data.essays
-        : [];
+      const asList = (value) => (Array.isArray(value) ? value : []);
+
+      const incomingEssays = asList(event.data.essays);
+      const incomingEducation = asList(event.data.education);
+      const incomingCareers = asList(event.data.careers);
+      const incomingCertificates = asList(event.data.certificates);
 
       chrome.storage.local.set(
         {
           syncedProfile: event.data.profile,
           syncedEssays: incomingEssays,
+          syncedEducation: incomingEducation,
+          syncedCareers: incomingCareers,
+          syncedCertificates: incomingCertificates,
           syncedAt: at
         },
         () => {
@@ -899,6 +1420,9 @@
 
           profile = Object.assign({}, DEFAULT_PROFILE, event.data.profile);
           essays = incomingEssays;
+          education = incomingEducation;
+          careers = incomingCareers;
+          certificates = incomingCertificates;
           hasSyncedProfile = true;
           syncedAt = at;
           reply({ type: 'SYNCED', syncedAt: at });
