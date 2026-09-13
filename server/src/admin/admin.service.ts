@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { In, MoreThanOrEqual, Repository } from 'typeorm';
 import { AuthUser } from '../auth/strategies/jwt.strategy';
 import { Resume } from '../resume/entities/resume.entity';
 import { Profile } from '../users/entities/profile.entity';
@@ -94,21 +94,45 @@ export class AdminService {
    * 통계
    * ------------------------------------------------------------------ */
 
+  /**
+   * 한 번에 메모리로 올릴 사용자 수.
+   *
+   * 완성도는 JSONB 본문을 읽어야 계산되므로 SQL만으로는 안 된다.
+   * 대신 전부 올리지 않고 이만큼씩 끊어 읽는다 — 사용자가 늘어도
+   * 메모리 사용량이 늘지 않는다.
+   */
+  private get statsBatchSize(): number {
+    const configured = Number(process.env.STATS_BATCH_SIZE);
+    return Number.isFinite(configured) && configured > 0 ? configured : 500;
+  }
+
   async getStats(): Promise<AdminStats> {
     const now = new Date();
     const days7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const days30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-    const [users, profiles, resumes] = await Promise.all([
-      this.userRepository.find({
-        select: { id: true, role: true, isActive: true, createdAt: true },
-      }),
-      this.profileRepository.find(),
-      this.resumeRepository.find(),
-    ]);
+    /*
+     * 개수는 SQL로 센다.
+     *
+     * 예전에는 users·profiles·resumes 테이블을 통째로 메모리에 올려
+     * 길이를 셌다. resumes에는 학력·경력·자격증·자소서 전문이 JSONB로
+     * 들어 있어서, 사용자가 몇천 명만 돼도 백오피스 첫 화면이 서버를 넘어뜨린다.
+     */
+    const [totalUsers, activeUsers, admins, withResume, signups7, signups30] =
+      await Promise.all([
+        this.userRepository.count(),
+        this.userRepository.count({ where: { isActive: true } }),
+        this.userRepository.count({ where: { role: UserRole.ADMIN } }),
+        this.resumeRepository
+          .createQueryBuilder('r')
+          .select('COUNT(DISTINCT r.userId)', 'count')
+          .getRawOne<{ count: string }>()
+          .then((row) => Number(row?.count ?? 0)),
+        this.userRepository.count({ where: { createdAt: MoreThanOrEqual(days7) } }),
+        this.userRepository.count({ where: { createdAt: MoreThanOrEqual(days30) } }),
+      ]);
 
-    const profileByUser = new Map(profiles.map((p) => [p.userId, p]));
-    const resumeByUser = this.pickLatestResumes(resumes);
+    const batchSize = this.statsBatchSize;
 
     let completenessSum = 0;
     const sectionSums: SectionBreakdown = {
@@ -119,38 +143,60 @@ export class AdminService {
     };
     const buckets = { '0-24': 0, '25-49': 0, '50-74': 0, '75-100': 0 };
 
-    for (const user of users) {
-      const { total, sections } = calculateCompleteness(
-        profileByUser.get(user.id),
-        resumeByUser.get(user.id),
-      );
+    // 완성도만 끊어 읽으며 누적한다.
+    for (let offset = 0; ; offset += batchSize) {
+      const batch = await this.userRepository.find({
+        select: { id: true },
+        order: { createdAt: 'ASC', id: 'ASC' },
+        skip: offset,
+        take: batchSize,
+      });
+      if (batch.length === 0) break;
 
-      completenessSum += total;
-      sectionSums.profile += sections.profile;
-      sectionSums.history += sections.history;
-      sectionSums.certificates += sections.certificates;
-      sectionSums.essays += sections.essays;
+      const ids = batch.map((user) => user.id);
+      const [profiles, resumes] = await Promise.all([
+        this.profileRepository.find({ where: { userId: In(ids) } }),
+        this.resumeRepository.find({ where: { userId: In(ids) } }),
+      ]);
 
-      if (total < 25) buckets['0-24'] += 1;
-      else if (total < 50) buckets['25-49'] += 1;
-      else if (total < 75) buckets['50-74'] += 1;
-      else buckets['75-100'] += 1;
+      const profileByUser = new Map(profiles.map((p) => [p.userId, p]));
+      const resumeByUser = this.pickLatestResumes(resumes);
+
+      for (const user of batch) {
+        const { total, sections } = calculateCompleteness(
+          profileByUser.get(user.id),
+          resumeByUser.get(user.id),
+        );
+
+        completenessSum += total;
+        sectionSums.profile += sections.profile;
+        sectionSums.history += sections.history;
+        sectionSums.certificates += sections.certificates;
+        sectionSums.essays += sections.essays;
+
+        if (total < 25) buckets['0-24'] += 1;
+        else if (total < 50) buckets['25-49'] += 1;
+        else if (total < 75) buckets['50-74'] += 1;
+        else buckets['75-100'] += 1;
+      }
+
+      if (batch.length < batchSize) break;
     }
 
-    const count = users.length || 1;
+    const count = totalUsers || 1;
     const round1 = (value: number) => Math.round((value / count) * 10) / 10;
 
     return {
       totals: {
-        users: users.length,
-        active: users.filter((u) => u.isActive).length,
-        inactive: users.filter((u) => !u.isActive).length,
-        admins: users.filter((u) => u.role === UserRole.ADMIN).length,
-        withResume: resumeByUser.size,
+        users: totalUsers,
+        active: activeUsers,
+        inactive: totalUsers - activeUsers,
+        admins,
+        withResume,
       },
       signups: {
-        last7Days: users.filter((u) => u.createdAt >= days7).length,
-        last30Days: users.filter((u) => u.createdAt >= days30).length,
+        last7Days: signups7,
+        last30Days: signups30,
       },
       completeness: {
         average: Math.round(completenessSum / count),
@@ -166,30 +212,47 @@ export class AdminService {
         },
         sectionWeights: COMPLETENESS_WEIGHTS,
       },
-      signupTrend: this.buildSignupTrend(users, 30),
+      signupTrend: await this.loadSignupTrend(30),
     };
   }
 
-  /** 가입이 없는 날도 0으로 채워야 그래프의 시간축이 왜곡되지 않는다. */
-  private buildSignupTrend(
-    users: Pick<User, 'createdAt'>[],
+  /**
+   * 가입 추이도 SQL로 집계한다.
+   *
+   * 예전에는 전체 사용자 행을 메모리로 올려 날짜별로 셌다.
+   * 빈 날짜는 0으로 채워야 그래프가 끊기지 않으므로 여기서 메운다.
+   */
+  private async loadSignupTrend(
     days: number,
-  ): { date: string; count: number }[] {
-    const counts = new Map<string, number>();
+  ): Promise<{ date: string; count: number }[]> {
+    const since = new Date();
+    since.setHours(0, 0, 0, 0);
+    since.setDate(since.getDate() - (days - 1));
+
+    /*
+     * 별칭을 'user'로 두면 안 된다 — Postgres의 예약어라 따옴표 없이 나가면
+     * "syntax error at or near \".\""가 난다.
+     */
+    const rows = await this.userRepository
+      .createQueryBuilder('u')
+      .select("to_char(u.createdAt, 'YYYY-MM-DD')", 'date')
+      .addSelect('COUNT(*)', 'count')
+      .where('u.createdAt >= :since', { since })
+      .groupBy('date')
+      .getRawMany<{ date: string; count: string }>();
+
+    const counted = new Map(rows.map((row) => [row.date, Number(row.count)]));
+    const trend: { date: string; count: number }[] = [];
 
     for (let i = days - 1; i >= 0; i -= 1) {
       const date = new Date();
       date.setHours(0, 0, 0, 0);
       date.setDate(date.getDate() - i);
-      counts.set(this.toDateKey(date), 0);
+      const key = this.toDateKey(date);
+      trend.push({ date: key, count: counted.get(key) ?? 0 });
     }
 
-    for (const user of users) {
-      const key = this.toDateKey(user.createdAt);
-      if (counts.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1);
-    }
-
-    return [...counts.entries()].map(([date, count]) => ({ date, count }));
+    return trend;
   }
 
   private toDateKey(date: Date): string {

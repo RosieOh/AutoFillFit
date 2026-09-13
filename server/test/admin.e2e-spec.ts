@@ -320,6 +320,54 @@ describe('Admin (통합)', () => {
       });
     });
 
+    /**
+     * 통계는 사용자 수가 늘어도 메모리를 더 쓰면 안 된다.
+     *
+     * 예전에는 users·profiles·resumes를 통째로 올려 세었다. resumes에는
+     * 자소서 전문이 JSONB로 들어 있어 몇천 명만 돼도 서버가 넘어간다.
+     * 지금은 개수는 SQL로 세고, 완성도만 500명씩 끊어 읽는다.
+     *
+     * 배치 경계에서 빠지거나 두 번 세는 일이 없는지 고정한다.
+     */
+    it('배치 크기보다 많은 사용자도 정확히 센다', async () => {
+      // 배치를 3으로 줄여 경계를 실제로 여러 번 넘게 한다
+      process.env.STATS_BATCH_SIZE = '3';
+      const extra = 12;
+      for (let i = 0; i < extra; i += 1) {
+        await createUser({ email: `bulk${i}@example.com` });
+      }
+
+      const res = await asAdmin('/admin/stats').expect(200);
+
+      expect(res.body.totals.users).toBe(2 + extra);
+      expect(res.body.totals.active).toBe(2 + extra);
+
+      // 분포의 합은 항상 전체 사용자 수와 같아야 한다
+      const distributed = res.body.completeness.distribution.reduce(
+        (sum: number, b: { count: number }) => sum + b.count,
+        0,
+      );
+      expect(distributed).toBe(2 + extra);
+
+      delete process.env.STATS_BATCH_SIZE;
+    });
+
+    it('가입 추이의 합이 최근 가입 수와 맞는다', async () => {
+      const res = await asAdmin('/admin/stats').expect(200);
+
+      const trendSum = res.body.signupTrend.reduce(
+        (sum: number, d: { count: number }) => sum + d.count,
+        0,
+      );
+      expect(trendSum).toBe(res.body.signups.last30Days);
+      expect(res.body.signupTrend).toHaveLength(30);
+    });
+
+    it('이력서를 가진 사용자 수를 센다', async () => {
+      const res = await asAdmin('/admin/stats').expect(200);
+      expect(res.body.totals.withResume).toBe(1);
+    });
+
     it('개인정보는 통계에 포함되지 않는다', async () => {
       const res = await asAdmin('/admin/stats').expect(200);
       const body = JSON.stringify(res.body);
