@@ -1,9 +1,12 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AppThrottlerGuard } from './common/guards/app-throttler.guard';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { RequestIdMiddleware } from './common/middleware/request-id.middleware';
+import { HealthController } from './health/health.controller';
 import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { ResumeModule } from './resume/resume.module';
@@ -67,6 +70,15 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     AdminModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
+  controllers: [HealthController],
+  providers: [
+    { provide: APP_GUARD, useClass: AppThrottlerGuard },
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
+  ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // 모든 요청에 ID를 붙인다. 예외 필터가 이 값을 로그와 응답에 남긴다.
+    consumer.apply(RequestIdMiddleware).forRoutes('*');
+  }
+}
