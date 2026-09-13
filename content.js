@@ -753,6 +753,23 @@
   }
 
   /**
+   * 라디오 그룹을 사용자에게 어떻게 부를 것인가.
+   *
+   * 개별 라디오의 라벨은 보기('대학교')라서, 그대로 쓰면 확인 패널에
+   * "대학교 → 대학교"처럼 무엇을 고른 것인지 알 수 없는 줄이 생긴다.
+   * 묶는 fieldset의 legend가 곧 질문이다.
+   */
+  function radioGroupLabel(group) {
+    const first = group.inputs[0];
+    const fieldset = first.closest('fieldset');
+    const legend = fieldset ? fieldset.querySelector('legend') : null;
+
+    const raw = (legend && legend.textContent) || group.name || '';
+    const text = String(raw).replace(/\s+/g, ' ').trim();
+    return text.length > 24 ? text.slice(0, 24) + '…' : text || '선택 항목';
+  }
+
+  /**
    * 라디오 그룹이 무엇을 묻는지.
    *
    * 개별 라디오의 라벨은 보기('남','여')라서 질문을 알 수 없다.
@@ -911,22 +928,24 @@
   /* ------------------------------------------------------------------ *
    * 7. 실행 엔트리
    * ------------------------------------------------------------------ */
-  function runAutoFill() {
-    // 대시보드에서 이력서를 받은 적이 없으면 아무것도 채우지 않는다.
-    // 여기서 막지 않으면 빈 값이나 남은 값이 실제 지원서에 들어간다.
-    if (!hasSyncedProfile) {
-      return { filled: 0, summary: {}, notSynced: true };
-    }
+  /**
+   * 무엇을 어디에 넣을지 먼저 계산한다. 채우지는 않는다.
+   *
+   * 계산과 실행을 분리해야 미리보기와 되돌리기가 가능하다.
+   * 예전에는 한 함수가 훑으면서 곧바로 채웠기 때문에, 사용자는 자소서 전문이
+   * 들어간 뒤에야 토스트로 알았고 되돌릴 방법이 없었다.
+   */
+  function planAutoFill() {
+    if (!hasSyncedProfile) return { items: [], skipped: [], notSynced: true };
 
     const all = Array.from(document.querySelectorAll('input, textarea'));
-    let filled = 0;
-    const summary = {};
+    const items = [];
     const skipped = [];
 
     /*
      * 1패스 — 장문 칸을 먼저 모은다.
-     * 한 칸씩 즉시 채우면 어느 문항이 이미 쓰였는지 알 수 없어
-     * 같은 답변이 여러 칸에 들어간다. 배정을 먼저 끝내야 한다.
+     * 한 칸씩 즉시 배정하면 어느 문항이 이미 쓰였는지 알 수 없어
+     * 같은 답변이 여러 칸에 들어간다.
      */
     const longTextFields = [];
 
@@ -948,14 +967,12 @@
 
     const assignment = assignEssays(longTextFields);
 
-    // 2패스 — 배정 결과대로 채운다.
     longTextFields.forEach((field, index) => {
       const essay = assignment.get(index);
 
       if (!essay) {
         // 확신이 없으면 비워 둔다. 잘못 채워진 자소서는 빈 자소서보다 나쁘다.
-        skipped.push({ label: field.label, reason: 'no-match' });
-        markSkipped(field.el);
+        skipped.push({ label: field.label, reason: 'no-match', el: field.el });
         return;
       }
 
@@ -973,21 +990,28 @@
           label: field.label,
           reason: 'too-long',
           length: essay.content.length,
-          limit: limit
+          limit: limit,
+          el: field.el
         });
-        markSkipped(field.el);
         return;
       }
 
-      fillField(field.el, essay.content);
-      if (field.el.value !== essay.content) return;
-
-      highlight(field.el);
-      summary.coverLetter = (summary.coverLetter || 0) + 1;
-      filled += 1;
+      items.push({
+        el: field.el,
+        kind: 'text',
+        key: 'coverLetter',
+        label: field.label,
+        value: essay.content,
+        /*
+         * 자소서는 기본 해제로 둔다.
+         * 길고, 개인적이고, 잘못 들어가면 손으로 지워야 복구된다.
+         * 나머지 항목과 같은 무게로 다룰 수 없다.
+         */
+        defaultOn: false
+      });
     });
 
-    // 나머지 항목(이름·이메일·연락처)은 칸마다 독립이라 순서대로 처리한다.
+    // 2패스 — 나머지 항목은 칸마다 독립이다.
     const longTextSet = new Set(longTextFields.map((field) => field.el));
 
     for (const el of all) {
@@ -998,19 +1022,19 @@
       if (!matched || matched.key === 'coverLetter') continue;
       if (matched.value == null || matched.value === '') continue;
 
-      const value = formatForField(el, matched.key, matched.value);
-      fillField(el, value);
-      if (!valueLanded(el, value)) continue;
-
-      highlight(el);
-      summary[matched.key] = (summary[matched.key] || 0) + 1;
-      filled += 1;
+      items.push({
+        el: el,
+        kind: 'text',
+        key: matched.key,
+        label: fieldLabelText(el),
+        value: formatForField(el, matched.key, matched.value),
+        defaultOn: true
+      });
     }
 
     /*
      * 3패스 — 선택형 칸.
      * 한국 지원서의 학력구분·졸업상태·성별·병역은 대부분 select와 radio다.
-     * 여기를 비워 두면 필수값 누락으로 제출이 반려된다.
      */
     for (const el of Array.from(document.querySelectorAll('select'))) {
       if (!isFillableSelect(el)) continue;
@@ -1022,11 +1046,15 @@
       // 확신이 없으면 고르지 않는다. 틀린 학력이 들어간 지원서는 빈 칸보다 나쁘다.
       if (!option) continue;
 
-      if (!fillChoice(el, option)) continue;
-
-      highlight(el);
-      summary[matched.key] = (summary[matched.key] || 0) + 1;
-      filled += 1;
+      items.push({
+        el: el,
+        kind: 'choice',
+        key: matched.key,
+        label: fieldLabelText(el),
+        value: (option.textContent || option.value).trim(),
+        option: option,
+        defaultOn: true
+      });
     }
 
     for (const group of collectRadioGroups()) {
@@ -1036,16 +1064,118 @@
       const input = pickRadio(group.inputs, matched.kind, matched.value);
       if (!input) continue;
 
-      if (!fillChoice(input, input)) continue;
+      items.push({
+        el: input,
+        kind: 'choice',
+        key: matched.key,
+        label: radioGroupLabel(group),
+        value: (getLabelText(input) || input.value).trim(),
+        option: input,
+        defaultOn: true
+      });
+    }
 
-      highlight(input.closest('label') || input);
-      summary[matched.key] = (summary[matched.key] || 0) + 1;
+    /*
+     * 화면에 나타나는 순서로 정렬한다.
+     *
+     * 위의 패스는 장문 → 일반 → 선택형 순으로 도는데, 그 순서를 그대로 보여주면
+     * 지원서 맨 아래 자소서가 패널 맨 위에 온다. 확인하라고 띄운 목록이
+     * 실제 폼과 순서가 다르면 눈으로 대조할 수 없다.
+     */
+    items.sort((a, b) => {
+      const position = a.el.compareDocumentPosition(b.el);
+      if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+
+    return { items, skipped, notSynced: false };
+  }
+
+  /**
+   * 계획대로 채운다.
+   *
+   * 채우기 전 값을 기록해 둔다. 기록이 없으면 되돌릴 수 없고,
+   * 되돌릴 수 없으면 사용자는 잘못 채워진 칸을 손으로 지워야 한다.
+   */
+  function applyPlan(plan, chosen) {
+    let filled = 0;
+    const summary = {};
+    const undo = [];
+
+    for (let i = 0; i < plan.items.length; i++) {
+      if (!chosen.has(i)) continue;
+      const item = plan.items[i];
+
+      if (item.kind === 'choice') {
+        const before =
+          item.el.tagName.toLowerCase() === 'select'
+            ? { type: 'select', value: item.el.value, index: item.el.selectedIndex }
+            : { type: 'radio', checked: item.el.checked };
+
+        if (!fillChoice(item.el, item.option)) continue;
+
+        undo.push({ el: item.el, before: before });
+        highlight(item.el.closest('label') || item.el);
+      } else {
+        const before = { type: 'text', value: item.el.value };
+
+        fillField(item.el, item.value);
+        if (!valueLanded(item.el, item.value)) continue;
+
+        undo.push({ el: item.el, before: before });
+        highlight(item.el);
+      }
+
+      summary[item.key] = (summary[item.key] || 0) + 1;
       filled += 1;
     }
 
+    markSkippedFields(plan.skipped);
+
     if (filled > 0) recordFillEvent(filled);
 
-    return { filled, summary, skipped };
+    return { filled, summary, skipped: plan.skipped, undo };
+  }
+
+  /**
+   * 건너뛴 칸에 표시를 남긴다.
+   *
+   * 확인 패널 단계가 아니라 실행 뒤에 칠한다. 미리보기에서 칠하면
+   * 아직 아무 일도 일어나지 않았는데 경고가 먼저 뜬다.
+   * 채울 항목이 하나도 없어 패널을 건너뛰는 경로에서도 반드시 불러야 한다 —
+   * 그러지 않으면 "전부 제한 초과"인 지원서에서 표시가 하나도 남지 않는다.
+   */
+  function markSkippedFields(skipped) {
+    for (const item of skipped) {
+      if (item.el) markSkipped(item.el);
+    }
+  }
+
+  /** 채우기 직전 상태로 되돌린다. */
+  function revertFill(undo) {
+    for (const entry of undo) {
+      const el = entry.el;
+      const before = entry.before;
+
+      try {
+        if (before.type === 'text') {
+          fillField(el, before.value);
+        } else if (before.type === 'select') {
+          el.value = before.value;
+          if (el.value !== before.value) el.selectedIndex = before.index;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          el.checked = before.checked;
+          el.dispatchEvent(new Event('click', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        el.classList.remove('autofill-fit-highlight');
+      } catch (_) {
+        /* 페이지가 그 사이 바뀌었으면 되돌릴 대상이 없다 */
+      }
+    }
   }
 
   function highlight(el) {
@@ -1234,6 +1364,233 @@
     );
   }
 
+  /* ------------------------------------------------------------------ *
+   * 9.5 입력 전 확인 · 되돌리기 · 도메인 허용
+   *
+   * 확장은 모든 사이트에 주입되고, 버튼 한 번에 27개 규칙이 돈다.
+   * LONG_TEXT_HINT는 '자기소개'만 걸리면 매칭되므로 커뮤니티 가입 폼의
+   * '자기소개' 칸에도 지원용 자소서 전문이 들어간다. 자소서에는 보통
+   * 이전 직장명과 출신 학교가 들어 있어, 한 번의 오입력이 곧 유출이다.
+   *
+   * 그래서 넣기 전에 무엇이 어디로 가는지 보여주고 확인을 받는다.
+   * ------------------------------------------------------------------ */
+
+  /** 되돌리기 버튼을 띄워 두는 시간. 짧으면 눌러 보기도 전에 사라진다. */
+  const UNDO_WINDOW_MS = 12000;
+
+  let undoTimer = null;
+
+  /** 이 사이트에서 계속 쓰기로 한 도메인 목록 */
+  let allowedHosts = [];
+
+  function loadAllowedHosts() {
+    try {
+      chrome.storage.local.get(['allowedHosts'], function (stored) {
+        if (chrome.runtime.lastError) return;
+        allowedHosts = Array.isArray(stored && stored.allowedHosts)
+          ? stored.allowedHosts
+          : [];
+      });
+    } catch (_) {
+      /* storage를 못 읽으면 매번 확인을 받는다 — 안전한 쪽이다 */
+    }
+  }
+
+  function isAllowedHost() {
+    return allowedHosts.indexOf(location.host) !== -1;
+  }
+
+  function rememberHost() {
+    if (isAllowedHost()) return;
+    allowedHosts = allowedHosts.concat([location.host]);
+    try {
+      chrome.storage.local.set({ allowedHosts: allowedHosts });
+    } catch (_) {
+      /* 저장 실패해도 이번 세션은 진행한다 */
+    }
+  }
+
+  /** 값이 길면 잘라서 보여준다. 미리보기가 화면을 덮으면 확인이 안 된다. */
+  function previewText(value) {
+    const text = String(value).replace(/\s+/g, ' ').trim();
+    return text.length > 42 ? text.slice(0, 42) + '…' : text;
+  }
+
+  /**
+   * 확인 패널을 띄우고, 사용자가 고른 항목으로 채운다.
+   * 취소하면 아무 일도 일어나지 않는다.
+   */
+  function showConfirmPanel(root, plan, onDone) {
+    const existing = root.querySelector('.autofill-fit-panel');
+    if (existing) existing.remove();
+
+    const panel = document.createElement('div');
+    panel.className = 'autofill-fit-panel';
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', '자동 입력할 항목 확인');
+
+    const head = document.createElement('div');
+    head.className = 'autofill-fit-panel__head';
+
+    const title = document.createElement('div');
+    title.className = 'autofill-fit-panel__title';
+    title.textContent = location.host;
+
+    const sub = document.createElement('div');
+    sub.className = 'autofill-fit-panel__sub';
+    sub.textContent = plan.items.length + '개 항목을 이 사이트에 입력합니다';
+
+    head.appendChild(title);
+    head.appendChild(sub);
+    panel.appendChild(head);
+
+    const list = document.createElement('div');
+    list.className = 'autofill-fit-panel__list';
+
+    const chosen = new Set();
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'autofill-fit-panel__confirm';
+
+    const syncConfirm = function () {
+      confirmBtn.textContent = '선택한 ' + chosen.size + '개 입력';
+      confirmBtn.disabled = chosen.size === 0;
+    };
+
+    plan.items.forEach(function (item, index) {
+      if (item.defaultOn) chosen.add(index);
+
+      const row = document.createElement('label');
+      row.className = 'autofill-fit-row';
+
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = item.defaultOn;
+      box.addEventListener('change', function () {
+        if (box.checked) chosen.add(index);
+        else chosen.delete(index);
+        syncConfirm();
+      });
+
+      const body = document.createElement('span');
+      body.className = 'autofill-fit-row__body';
+
+      const label = document.createElement('span');
+      label.className = 'autofill-fit-row__label';
+      label.textContent = item.label;
+
+      const value = document.createElement('span');
+      value.className = 'autofill-fit-row__value';
+      value.textContent = previewText(item.value);
+
+      body.appendChild(label);
+      body.appendChild(value);
+
+      row.appendChild(box);
+      row.appendChild(body);
+
+      // 자소서는 기본 해제다. 왜 꺼져 있는지 밝혀 두지 않으면 버그로 보인다.
+      if (!item.defaultOn) {
+        const note = document.createElement('span');
+        note.className = 'autofill-fit-row__note';
+        note.textContent = '길어서 기본 해제';
+        row.appendChild(note);
+      }
+
+      list.appendChild(row);
+    });
+
+    syncConfirm();
+    panel.appendChild(list);
+
+    const foot = document.createElement('div');
+    foot.className = 'autofill-fit-panel__foot';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'autofill-fit-panel__cancel';
+    cancelBtn.textContent = '취소';
+
+    const remember = document.createElement('label');
+    remember.className = 'autofill-fit-panel__remember';
+    const rememberBox = document.createElement('input');
+    rememberBox.type = 'checkbox';
+    const rememberText = document.createElement('span');
+    rememberText.textContent = '이 사이트에서는 다음부터 묻지 않기';
+    remember.appendChild(rememberBox);
+    remember.appendChild(rememberText);
+
+    foot.appendChild(confirmBtn);
+    foot.appendChild(cancelBtn);
+    panel.appendChild(foot);
+    panel.appendChild(remember);
+
+    const close = function () {
+      panel.remove();
+    };
+
+    cancelBtn.addEventListener('click', close);
+    confirmBtn.addEventListener('click', function () {
+      if (rememberBox.checked) rememberHost();
+      close();
+      onDone(chosen);
+    });
+
+    root.appendChild(panel);
+    return panel;
+  }
+
+  /** 채운 직후 되돌릴 기회를 준다. */
+  function showUndo(root, undo) {
+    const existing = root.querySelector('.autofill-fit-undo');
+    if (existing) existing.remove();
+    if (undo.length === 0) return;
+
+    const bar = document.createElement('button');
+    bar.type = 'button';
+    bar.className = 'autofill-fit-undo';
+    bar.textContent = '되돌리기 (' + undo.length + '개)';
+
+    bar.addEventListener('click', function () {
+      revertFill(undo);
+      bar.remove();
+      showToast(root, '되돌렸습니다.', false, []);
+    });
+
+    root.appendChild(bar);
+
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(function () {
+      bar.remove();
+    }, UNDO_WINDOW_MS);
+  }
+
+  /** 결과를 토스트로 보고한다. */
+  function reportResult(root, result) {
+    if (result.filled === 0 && !hasSkipped(result)) {
+      showToast(root, '채울 수 있는 입력창을 찾지 못했습니다.', true);
+      return;
+    }
+
+    const detail = Object.keys(result.summary)
+      .map(function (k) {
+        return (LABELS[k] || k) + ' ' + result.summary[k];
+      })
+      .join(' · ');
+
+    /*
+     * 비워 둔 칸을 알리지 않으면 사용자는 다 채워진 줄 알고 제출한다.
+     * 채운 개수만 말하는 것은 절반의 보고다.
+     */
+    const notes = describeSkipped(result.skipped);
+    const headline = result.filled > 0
+      ? result.filled + '개 입력 완료 (' + detail + ')'
+      : '채우지 못했습니다.';
+
+    showToast(root, headline, result.filled === 0, notes);
+  }
+
   function createUI() {
     if (document.getElementById('autofill-fit-root')) return;
 
@@ -1263,30 +1620,36 @@
 
       button.classList.add('is-busy');
       try {
-        const result = runAutoFill();
-        if (result.notSynced) {
+        const plan = planAutoFill();
+
+        if (plan.notSynced) {
           showToast(
             root,
             '먼저 대시보드에서 "이력서 전달"을 눌러 주세요.',
             true
           );
-        } else if (result.filled === 0 && !hasSkipped(result)) {
-          showToast(root, '채울 수 있는 입력창을 찾지 못했습니다.', true);
+        } else if (plan.items.length === 0) {
+          // 채울 것이 없으면 확인 패널을 띄울 이유도 없다.
+          // 다만 비워 둔 칸 표시는 이 경로에서도 남겨야 한다.
+          markSkippedFields(plan.skipped);
+          reportResult(root, { filled: 0, summary: {}, skipped: plan.skipped });
         } else {
-          const detail = Object.keys(result.summary)
-            .map((k) => (LABELS[k] || k) + ' ' + result.summary[k])
-            .join(' · ');
+          const run = function (chosen) {
+            const result = applyPlan(plan, chosen);
+            reportResult(root, result);
+            showUndo(root, result.undo);
+          };
 
-          /*
-           * 비워 둔 칸을 알리지 않으면 사용자는 다 채워진 줄 알고 제출한다.
-           * 채운 개수만 말하는 것은 절반의 보고다.
-           */
-          const notes = describeSkipped(result.skipped);
-          const headline = result.filled > 0
-            ? result.filled + '개 입력 완료 (' + detail + ')'
-            : '채우지 못했습니다.';
-
-          showToast(root, headline, result.filled === 0, notes);
+          if (isAllowedHost()) {
+            // 이미 허용한 사이트는 매번 묻지 않는다. 되돌리기는 그대로 준다.
+            const auto = new Set();
+            plan.items.forEach(function (item, i) {
+              if (item.defaultOn) auto.add(i);
+            });
+            run(auto);
+          } else {
+            showConfirmPanel(root, plan, run);
+          }
         }
       } catch (err) {
         console.error('[AutoFill-Fit]', err);
@@ -1438,6 +1801,7 @@
    * ------------------------------------------------------------------ */
   function bootstrap() {
     loadProfile();
+    loadAllowedHosts();
     watchProfileChanges();
 
     // 대시보드 자신에게는 자동 입력 버튼을 띄우지 않는다.

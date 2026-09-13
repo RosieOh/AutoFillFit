@@ -70,9 +70,40 @@ async function loadContentScript() {
   await new Promise((r) => setTimeout(r, 30));
 }
 
+/**
+ * 버튼을 누르고 확인 패널까지 통과시킨다.
+ *
+ * 이제 채우기 전에 확인 패널이 뜬다. 기본 해제인 항목(자소서)까지
+ * 전부 켜서 "예전처럼 다 채우는" 흐름을 재현한다.
+ * 패널 자체의 동작은 아래 '입력 전 확인' describe에서 따로 검증한다.
+ */
 function clickAutofill() {
   const button = document.querySelector<HTMLElement>('.autofill-fit-btn');
   button?.click();
+  confirmPanel();
+}
+
+/** 패널이 떠 있으면 모두 선택하고 확인을 누른다. */
+function confirmPanel(selectAll = true) {
+  const panel = document.querySelector('.autofill-fit-panel');
+  if (!panel) return false;
+
+  if (selectAll) {
+    panel
+      .querySelectorAll<HTMLInputElement>('.autofill-fit-row input[type="checkbox"]')
+      .forEach((box) => {
+        if (!box.checked) box.click();
+      });
+  }
+
+  panel.querySelector<HTMLElement>('.autofill-fit-panel__confirm')?.click();
+  return true;
+}
+
+/** 버튼만 누르고 패널은 그대로 둔다. */
+function openPanel() {
+  document.querySelector<HTMLElement>('.autofill-fit-btn')?.click();
+  return document.querySelector('.autofill-fit-panel');
 }
 
 const value = (selector: string) =>
@@ -941,5 +972,260 @@ describe('값 형식 맞추기', () => {
     expect(value('#p')).toBe('010-1234-5678');
     // 예전에는 문자열이 달라졌다는 이유로 실패로 세어 '찾지 못했습니다'를 띄웠다
     expect(toastText()).toContain('전화번호 1');
+  });
+});
+
+/**
+ * 입력 전 확인.
+ *
+ * 확장은 모든 사이트에 주입되고 버튼 한 번에 27개 규칙이 돈다.
+ * LONG_TEXT_HINT는 '자기소개'만 걸리면 매칭되므로, 커뮤니티 가입 폼의
+ * '자기소개' 칸에도 지원용 자소서 전문이 들어갈 수 있다.
+ * 넣기 전에 무엇이 어디로 가는지 보여주고 확인을 받아야 한다.
+ */
+describe('입력 전 확인', () => {
+  const FORM = `
+    <form>
+      <div><label for="n">이름</label><input id="n"></div>
+      <div><label for="e">이메일</label><input id="e" type="email"></div>
+      <div><label for="q">지원 동기</label><textarea id="q"></textarea></div>
+    </form>`;
+
+  it('바로 채우지 않고 패널을 먼저 띄운다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(panel).not.toBeNull();
+    // 확인 전에는 한 글자도 들어가면 안 된다
+    expect(value('#n')).toBe('');
+    expect(value('#e')).toBe('');
+    expect(value('#q')).toBe('');
+  });
+
+  it('어느 사이트에 무엇이 들어가는지 보여준다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    expect(panel?.textContent).toContain('jobs.example.com');
+    expect(panel?.textContent).toContain('홍길동');
+    expect(panel?.textContent).toContain('이름');
+  });
+
+  it('확인을 눌러야 채워진다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    openPanel();
+    confirmPanel();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#n')).toBe(PROFILE.name);
+  });
+
+  it('취소하면 아무 일도 일어나지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    openPanel();
+    document
+      .querySelector<HTMLElement>('.autofill-fit-panel__cancel')
+      ?.click();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#n')).toBe('');
+    expect(document.querySelector('.autofill-fit-panel')).toBeNull();
+  });
+
+  it('자소서는 기본 해제다 — 길고 되돌리기 어렵다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    openPanel();
+    // 켜진 것만 그대로 두고 확인
+    confirmPanel(false);
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#n')).toBe(PROFILE.name);
+    expect(value('#e')).toBe(PROFILE.email);
+    expect(value('#q')).toBe('');
+  });
+
+  it('끈 항목은 넣지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    // 첫 항목(이름)을 끈다
+    const boxes = panel!.querySelectorAll<HTMLInputElement>(
+      '.autofill-fit-row input[type="checkbox"]',
+    );
+    boxes[0].click();
+    panel!.querySelector<HTMLElement>('.autofill-fit-panel__confirm')?.click();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(value('#n')).toBe('');
+    expect(value('#e')).toBe(PROFILE.email);
+  });
+
+  it('전부 끄면 확인 버튼이 비활성이다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    panel!
+      .querySelectorAll<HTMLInputElement>('.autofill-fit-row input[type="checkbox"]')
+      .forEach((box) => {
+        if (box.checked) box.click();
+      });
+
+    const confirm = panel!.querySelector<HTMLButtonElement>(
+      '.autofill-fit-panel__confirm',
+    );
+    expect(confirm?.disabled).toBe(true);
+  });
+
+  it('허용한 사이트에서는 묻지 않는다', async () => {
+    installChrome({ ...fullSync(), allowedHosts: ['jobs.example.com'] });
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    openPanel();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector('.autofill-fit-panel')).toBeNull();
+    expect(value('#n')).toBe(PROFILE.name);
+    // 묻지 않아도 자소서는 여전히 기본 해제다
+    expect(value('#q')).toBe('');
+  });
+
+  it('"다음부터 묻지 않기"를 선택하면 저장한다', async () => {
+    const local: Record<string, unknown> = fullSync();
+    installChrome(local);
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+    panel!
+      .querySelector<HTMLInputElement>('.autofill-fit-panel__remember input')!
+      .click();
+    panel!.querySelector<HTMLElement>('.autofill-fit-panel__confirm')?.click();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(local.allowedHosts).toEqual(['jobs.example.com']);
+  });
+});
+
+describe('되돌리기', () => {
+  const FORM = `
+    <form>
+      <div><label for="n">이름</label><input id="n"></div>
+      <div><label for="e">이메일</label><input id="e" type="email"></div>
+    </form>`;
+
+  it('채운 뒤 되돌리기 버튼이 나온다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector('.autofill-fit-undo')).not.toBeNull();
+  });
+
+  it('누르면 채우기 전 값으로 돌아간다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(value('#n')).toBe(PROFILE.name);
+
+    document.querySelector<HTMLElement>('.autofill-fit-undo')?.click();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // 손으로 지우지 않아도 복구된다
+    expect(value('#n')).toBe('');
+    expect(value('#e')).toBe('');
+    expect(toastText()).toContain('되돌렸습니다');
+  });
+
+  it('선택형 칸도 되돌린다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <label for="d">최종학력</label>
+        <select id="d">
+          <option value="">선택하세요</option>
+          <option value="BA">대학교(4년)</option>
+        </select>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(document.querySelector<HTMLSelectElement>('#d')?.value).toBe('BA');
+
+    document.querySelector<HTMLElement>('.autofill-fit-undo')?.click();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector<HTMLSelectElement>('#d')?.value).toBe('');
+  });
+
+  it('채운 것이 없으면 되돌리기를 띄우지 않는다', async () => {
+    installChrome(fullSync());
+    // 장문 칸이 하나뿐이면 fallback이 적용되므로 두 개를 둔다
+    document.body.innerHTML = `
+      <form>
+        <div><label for="x">배송 요청사항</label><textarea id="x"></textarea></div>
+        <div><label for="y">문의 내용</label><textarea id="y"></textarea></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector('.autofill-fit-undo')).toBeNull();
+  });
+});
+
+describe('확인 패널의 라디오 표기', () => {
+  it('보기가 아니라 질문을 라벨로 쓴다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <fieldset>
+          <legend>최종학력 구분</legend>
+          <label><input type="radio" name="edu" value="고등학교"> 고등학교</label>
+          <label><input type="radio" name="edu" value="대학교"> 대학교</label>
+        </fieldset>
+      </form>`;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    const row = panel!.querySelector('.autofill-fit-row');
+    // 예전에는 "대학교 → 대학교"로 나와 무엇을 고른 건지 알 수 없었다
+    expect(row?.querySelector('.autofill-fit-row__label')?.textContent).toBe(
+      '최종학력 구분',
+    );
+    expect(row?.querySelector('.autofill-fit-row__value')?.textContent).toBe(
+      '대학교',
+    );
   });
 });
