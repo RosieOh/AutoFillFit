@@ -69,7 +69,7 @@ export default function DashboardPage() {
     syncing,
     syncError,
     clear: clearExtension,
-  } = useExtension(autofill);
+  } = useExtension(autofill, savedAt);
 
   const methods = useForm<ResumeFormValues>({
     defaultValues: EMPTY_FORM,

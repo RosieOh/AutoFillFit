@@ -116,6 +116,21 @@
   color: #64748b;
 }
 
+#autofill-fit-root .autofill-fit-panel__freshness {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #64748b;
+}
+
+/* 오래된 이력서는 색으로 한 번 더 눈에 걸리게 한다 */
+#autofill-fit-root .autofill-fit-panel__freshness.is-stale {
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: #fef3c7;
+  color: #92400e;
+  font-weight: 500;
+}
+
 #autofill-fit-root .autofill-fit-panel__list {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -229,6 +244,28 @@
   width: 14px;
   height: 14px;
   accent-color: #4f46e5;
+}
+
+/* --------------------- 남은 필수 칸 --------------------- */
+/* 20칸이 채워지면 다 됐다고 믿는다. 남은 것도 세어 줘야 한다 */
+#autofill-fit-root .autofill-fit-remaining {
+  order: -1;
+  align-self: flex-end;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(146, 64, 14, 0.16);
+}
+
+#autofill-fit-root .autofill-fit-remaining:hover {
+  background: #fef3c7;
 }
 
 /* --------------------- 되돌리기 --------------------- */

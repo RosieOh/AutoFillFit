@@ -1229,3 +1229,135 @@ describe('확인 패널의 라디오 표기', () => {
     );
   });
 });
+
+/**
+ * 이력서 기준 시각.
+ *
+ * 확장은 "언제 전달받았는지"는 알지만 "그 이력서를 언제 썼는지"는 몰랐다.
+ * 두 달 전 경력으로 지원서를 내면서도 어제 전달했으면 최신처럼 보인다.
+ */
+describe('이력서 신선도', () => {
+  const FORM = '<form><div><label for="n">이름</label><input id="n"></div></form>';
+  const daysAgo = (n: number) =>
+    new Date(Date.now() - n * 86400000).toISOString();
+
+  it('확인 패널에 저장 시각을 보여준다', async () => {
+    installChrome({ ...fullSync(), resumeUpdatedAt: daysAgo(3) });
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    expect(panel?.textContent).toContain('3일 전');
+  });
+
+  it('오래된 이력서는 경고로 표시한다', async () => {
+    installChrome({ ...fullSync(), resumeUpdatedAt: daysAgo(60) });
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    const note = panel?.querySelector('.autofill-fit-panel__freshness');
+    expect(note?.className).toContain('is-stale');
+    expect(note?.textContent).toContain('최신인지 확인');
+  });
+
+  it('최근 이력서는 경고하지 않는다', async () => {
+    installChrome({ ...fullSync(), resumeUpdatedAt: daysAgo(2) });
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    expect(
+      panel?.querySelector('.autofill-fit-panel__freshness')?.className,
+    ).not.toContain('is-stale');
+  });
+
+  it('저장 시각을 모르면 전달 시각으로 대신한다', async () => {
+    installChrome({ ...fullSync(), syncedAt: daysAgo(5) });
+    document.body.innerHTML = FORM;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    expect(panel?.textContent).toContain('5일 전');
+  });
+});
+
+/**
+ * 제출 전 빈칸 점검.
+ *
+ * 확장이 20칸을 채우면 사용자는 다 됐다고 믿는다. 그런데 증명사진과
+ * 동의 체크박스는 여전히 비어 있고, 그대로 제출하면 반려된다.
+ */
+describe('남은 필수 칸', () => {
+  it('확장이 채우지 못한 필수 칸을 센다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="n">이름</label><input id="n" required></div>
+        <div><label for="p">증명사진</label><input id="p" type="file" required></div>
+        <div><label for="a">개인정보 동의</label><input id="a" type="checkbox" required></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    const bar = document.querySelector('.autofill-fit-remaining');
+    expect(bar?.textContent).toContain('2개');
+    // 파일 칸은 확장이 영원히 채울 수 없으므로 따로 알려 준다
+    expect(bar?.textContent).toContain('첨부 1개');
+  });
+
+  it('확장이 채운 필수 칸은 세지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML =
+      '<form><div><label for="n">이름</label><input id="n" required></div></form>';
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector('.autofill-fit-remaining')).toBeNull();
+  });
+
+  it('라디오 그룹은 한 번만 센다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="n">이름</label><input id="n" required></div>
+        <fieldset>
+          <legend>수신 동의</legend>
+          <label><input type="radio" name="ok" value="y" required> 동의</label>
+          <label><input type="radio" name="ok" value="n" required> 거부</label>
+        </fieldset>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // 2개가 아니라 1개다
+    expect(document.querySelector('.autofill-fit-remaining')?.textContent).toContain(
+      '1개',
+    );
+  });
+
+  it('필수가 아닌 빈 칸은 세지 않는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="n">이름</label><input id="n" required></div>
+        <div><label for="m">기타 메모</label><input id="m"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(document.querySelector('.autofill-fit-remaining')).toBeNull();
+  });
+});

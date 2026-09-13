@@ -52,6 +52,14 @@
   /** 대시보드에서 동기화된 값 (chrome.storage.local) */
   let syncedAt = null;
 
+  /**
+   * 이력서를 마지막으로 저장한 시각 (서버 기준).
+   *
+   * syncedAt과 다르다. 두 달 전에 쓴 이력서를 어제 전달했다면
+   * syncedAt은 어제지만 내용은 두 달 전 것이다. 채우기 전에 이 값을 보여준다.
+   */
+  let resumeUpdatedAt = null;
+
   function loadProfile() {
     try {
       if (!chrome || !chrome.storage) return;
@@ -60,7 +68,8 @@
       chrome.storage.local.get(
         [
           'syncedProfile', 'syncedAt', 'syncedEssays',
-          'syncedEducation', 'syncedCareers', 'syncedCertificates'
+          'syncedEducation', 'syncedCareers', 'syncedCertificates',
+          'resumeUpdatedAt'
         ],
         (local) => {
         if (chrome.runtime.lastError) return;
@@ -71,6 +80,7 @@
         education = list(local && local.syncedEducation);
         careers = list(local && local.syncedCareers);
         certificates = list(local && local.syncedCertificates);
+        resumeUpdatedAt = (local && local.resumeUpdatedAt) || null;
 
         if (local && local.syncedProfile) {
           profile = { ...DEFAULT_PROFILE, ...local.syncedProfile };
@@ -129,6 +139,9 @@
         if (changes.syncedCertificates) certificates = listOf(changes.syncedCertificates);
 
         if (changes.syncedAt) syncedAt = changes.syncedAt.newValue || null;
+        if (changes.resumeUpdatedAt) {
+          resumeUpdatedAt = changes.resumeUpdatedAt.newValue || null;
+        }
       });
     } catch (_) {
       /* 구독 실패해도 다음 페이지 로드에서 최신값을 읽는다. */
@@ -920,8 +933,14 @@
     el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: '' }));
-    el.dispatchEvent(new Event('blur', { bubbles: false }));
 
+    /*
+     * blur는 el.blur()로만 낸다.
+     *
+     * 예전에는 blur 이벤트를 직접 dispatch한 뒤 el.blur()를 또 불러
+     * blur가 두 번 돌았다. 일부 폼 라이브러리는 blur마다 검증을 돌리므로
+     * 같은 칸에 오류 메시지가 두 번 뜨거나, 첫 검증 결과가 두 번째로 덮인다.
+     */
     el.blur();
   }
 
@@ -1410,6 +1429,36 @@
     }
   }
 
+  /** 이 기간이 지난 이력서는 그대로 내도 되는지 다시 보게 한다. */
+  const STALE_AFTER_DAYS = 30;
+
+  /**
+   * 확인 패널에 띄울 이력서 기준 시각.
+   *
+   * 사용자는 "지금 채워지는 내용이 언제 쓴 것인지"를 모른 채 제출한다.
+   * 두 달 전 경력으로 지원서를 내는 사고는 여기서만 막을 수 있다.
+   */
+  function freshnessNote() {
+    const iso = resumeUpdatedAt || syncedAt;
+    if (!iso) return null;
+
+    const at = new Date(iso);
+    if (isNaN(at.getTime())) return null;
+
+    const days = Math.floor((Date.now() - at.getTime()) / 86400000);
+    const when =
+      at.getFullYear() + '년 ' + (at.getMonth() + 1) + '월 ' + at.getDate() + '일';
+
+    if (days <= 0) return { text: '오늘 저장한 이력서입니다', stale: false };
+    if (days < STALE_AFTER_DAYS) {
+      return { text: when + ' 저장 (' + days + '일 전)', stale: false };
+    }
+    return {
+      text: when + ' 저장 — ' + days + '일 지났습니다. 최신인지 확인해 주세요',
+      stale: true
+    };
+  }
+
   /** 값이 길면 잘라서 보여준다. 미리보기가 화면을 덮으면 확인이 안 된다. */
   function previewText(value) {
     const text = String(value).replace(/\s+/g, ' ').trim();
@@ -1442,6 +1491,16 @@
 
     head.appendChild(title);
     head.appendChild(sub);
+
+    const freshness = freshnessNote();
+    if (freshness) {
+      const note = document.createElement('div');
+      note.className =
+        'autofill-fit-panel__freshness' + (freshness.stale ? ' is-stale' : '');
+      note.textContent = freshness.text;
+      head.appendChild(note);
+    }
+
     panel.appendChild(head);
 
     const list = document.createElement('div');
@@ -1541,6 +1600,93 @@
     return panel;
   }
 
+  /**
+   * 아직 비어 있는 필수 칸을 센다.
+   *
+   * 확장이 20칸을 채워 주면 사용자는 다 됐다고 믿는다. 그런데 증명사진(file),
+   * 동의 체크박스, 확장이 손대지 않은 select는 여전히 비어 있고,
+   * 그대로 제출하면 필수값 누락으로 반려된다.
+   *
+   * 채운 개수만 보고하는 것으로는 부족하다. 남은 것도 세어 준다.
+   */
+  function findRemainingRequired() {
+    const nodes = Array.from(
+      document.querySelectorAll(
+        'input[required], select[required], textarea[required], ' +
+        '[aria-required="true"]'
+      )
+    );
+
+    const remaining = [];
+    const seenRadioGroups = new Set();
+
+    for (const el of nodes) {
+      if (el.closest('#autofill-fit-root')) continue;
+      if (el.disabled) continue;
+      if (!isVisible(el)) continue;
+
+      const tag = el.tagName.toLowerCase();
+      const type = (el.getAttribute('type') || '').toLowerCase();
+
+      if (type === 'radio' || type === 'checkbox') {
+        // 라디오는 그룹 단위로 한 번만 센다.
+        const name = el.name || '';
+        if (type === 'radio') {
+          if (seenRadioGroups.has(name)) continue;
+          seenRadioGroups.add(name);
+          const group = Array.from(
+            document.querySelectorAll('input[type="radio"][name="' + CSS.escape(name) + '"]')
+          );
+          if (group.some((input) => input.checked)) continue;
+        } else if (el.checked) {
+          continue;
+        }
+      } else if (tag === 'select') {
+        if (el.value && el.value.trim() !== '') continue;
+      } else if (type === 'file') {
+        if (el.files && el.files.length > 0) continue;
+      } else if (el.value && el.value.trim() !== '') {
+        continue;
+      }
+
+      remaining.push({ el: el, label: fieldLabelText(el), type: type || tag });
+    }
+
+    return remaining;
+  }
+
+  /** 남은 칸을 알리고, 누르면 그 칸으로 데려간다. */
+  function showRemaining(root, remaining) {
+    const existing = root.querySelector('.autofill-fit-remaining');
+    if (existing) existing.remove();
+    if (remaining.length === 0) return;
+
+    const bar = document.createElement('button');
+    bar.type = 'button';
+    bar.className = 'autofill-fit-remaining';
+
+    // 파일 칸은 확장이 영원히 채울 수 없으므로 따로 알려 준다.
+    const files = remaining.filter((item) => item.type === 'file');
+    bar.textContent =
+      '아직 비어 있는 필수 칸 ' + remaining.length + '개' +
+      (files.length > 0 ? ' (첨부 ' + files.length + '개 포함)' : '');
+
+    let cursor = 0;
+    bar.addEventListener('click', function () {
+      const target = remaining[cursor % remaining.length];
+      cursor += 1;
+
+      try {
+        target.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        markSkipped(target.el);
+      } catch (_) {
+        /* 그 사이 페이지가 바뀌었으면 넘어간다 */
+      }
+    });
+
+    root.appendChild(bar);
+  }
+
   /** 채운 직후 되돌릴 기회를 준다. */
   function showUndo(root, undo) {
     const existing = root.querySelector('.autofill-fit-undo');
@@ -1638,6 +1784,8 @@
             const result = applyPlan(plan, chosen);
             reportResult(root, result);
             showUndo(root, result.undo);
+            // 채운 뒤에 세야 한다. 채우기 전에 세면 곧 채워질 칸까지 포함된다.
+            showRemaining(root, findRemainingRequired());
           };
 
           if (isAllowedHost()) {
@@ -1736,7 +1884,8 @@
       chrome.storage.local.remove(
         [
           'syncedProfile', 'syncedEssays', 'syncedAt', 'fillHistory',
-          'syncedEducation', 'syncedCareers', 'syncedCertificates'
+          'syncedEducation', 'syncedCareers', 'syncedCertificates',
+          'resumeUpdatedAt'
         ],
         () => {
           profile = { ...DEFAULT_PROFILE };
@@ -1746,6 +1895,7 @@
           certificates = [];
           hasSyncedProfile = false;
           syncedAt = null;
+          resumeUpdatedAt = null;
           reply({ type: 'CLEARED' });
         }
       );
@@ -1769,6 +1919,7 @@
           syncedEducation: incomingEducation,
           syncedCareers: incomingCareers,
           syncedCertificates: incomingCertificates,
+          resumeUpdatedAt: event.data.resumeUpdatedAt || null,
           syncedAt: at
         },
         () => {
@@ -1786,6 +1937,7 @@
           education = incomingEducation;
           careers = incomingCareers;
           certificates = incomingCertificates;
+          resumeUpdatedAt = event.data.resumeUpdatedAt || null;
           hasSyncedProfile = true;
           syncedAt = at;
           reply({ type: 'SYNCED', syncedAt: at });

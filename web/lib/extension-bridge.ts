@@ -46,7 +46,16 @@ interface ExtensionMessage {
  * externally_connectable을 쓰면 확장 ID를 알아야 하는데, 개발 중 unpacked 확장은
  * ID가 매번 달라진다. content script가 이 페이지에도 주입되므로 postMessage로 주고받는다.
  */
-export function useExtension(autofill: MyResumeResponse['autofill'] | null) {
+export function useExtension(
+  autofill: MyResumeResponse['autofill'] | null,
+  /**
+   * 서버가 기록한 이력서 마지막 저장 시각.
+   *
+   * 확장은 "언제 전달받았는지"는 알지만 "그 이력서가 언제 작성된 것인지"는
+   * 모른다. 두 달 전 이력서를 그대로 채우면서도 어제 전달했으면 최신처럼 보인다.
+   */
+  resumeUpdatedAt?: string | null,
+) {
   const [state, setState] = useState<BridgeState>('checking');
   const [info, setInfo] = useState<ExtensionInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -63,6 +72,9 @@ export function useExtension(autofill: MyResumeResponse['autofill'] | null) {
   /** deps에 넣지 않고도 최신 값을 쓰기 위한 참조 (effect는 한 번만 돈다). */
   const autofillRef = useRef(autofill);
   autofillRef.current = autofill;
+
+  const updatedAtRef = useRef(resumeUpdatedAt);
+  updatedAtRef.current = resumeUpdatedAt;
 
   const clearSyncTimeout = useCallback(() => {
     if (syncTimeout.current) {
@@ -193,6 +205,8 @@ export function useExtension(autofill: MyResumeResponse['autofill'] | null) {
         education: current.education ?? [],
         careers: current.careers ?? [],
         certificates: current.certificates ?? [],
+        /** 확장이 "이 이력서는 언제 쓴 것인가"를 보여줄 수 있도록 함께 넘긴다 */
+        resumeUpdatedAt: updatedAtRef.current ?? null,
       },
       window.location.origin,
     );
