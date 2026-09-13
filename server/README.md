@@ -160,6 +160,19 @@ npm run admin:grant -- hong@example.com --revoke   # 회수
 탈퇴는 되돌릴 수 없으므로 비밀번호를 다시 받습니다. 토큰만으로 지우게 하면 잠깐
 자리를 비운 사이 열린 브라우저에서 삭제가 일어납니다.
 
+## 마이그레이션
+
+```bash
+npm run migration:generate -- src/database/migrations/<이름>
+npm run migration:run
+```
+
+`src/database/migrations/`의 `InitialSchema`가 기준점입니다. `DB_SYNCHRONIZE`는
+기본이 `false`이고, `NODE_ENV=production`에서는 그 값과 무관하게 꺼집니다.
+
+`synchronize`는 컬럼명을 바꿀 때 `DROP` + `ADD`로 처리하므로, JSONB에 이력 전체가
+들어 있는 이 스키마에서는 커밋 하나가 전 사용자의 이력서를 지울 수 있습니다.
+
 ## 요청 제한
 
 `POST /auth/login`은 분당 10회, `POST /auth/signup`은 시간당 5회(IP 기준)입니다.

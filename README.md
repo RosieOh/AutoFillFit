@@ -93,6 +93,31 @@ content script는 `document_idle`에, 대시보드는 hydration 후에 준비되
 붙이면 넣은 값과 달라지는데, 그걸 실패로 세면 제대로 채워 놓고도
 &ldquo;채울 수 있는 입력창을 찾지 못했습니다&rdquo;를 띄우게 됩니다.
 
+## 넣기 전에 확인받는다
+
+확장은 모든 사이트에 주입되고, 버튼 한 번에 27개 규칙이 돕니다. `LONG_TEXT_HINT`는
+`자기소개`만 걸리면 매칭되므로 **커뮤니티 가입 폼의 '자기소개' 칸에도 지원용 자소서
+전문이 들어갈 수 있습니다.** 자소서에는 보통 이전 직장명과 출신 학교가 들어 있어
+한 번의 오입력이 곧 유출입니다.
+
+그래서 버튼을 누르면 바로 채우지 않고 **무엇이 어디로 가는지 먼저 보여줍니다.**
+
+- 도메인과 항목 목록(라벨 → 들어갈 값)을 띄우고, 항목별로 끌 수 있습니다
+- **자소서는 기본 해제**입니다. 길고, 개인적이고, 잘못 들어가면 손으로 지워야 합니다
+- 목록은 지원서에 나타나는 순서로 정렬합니다 — 순서가 다르면 눈으로 대조할 수 없습니다
+- 라디오 그룹은 고른 보기가 아니라 **질문**을 라벨로 씁니다
+- 취소하면 아무 일도 일어나지 않습니다
+
+`이 사이트에서는 다음부터 묻지 않기`를 고르면 그 도메인은 허용 목록에 들어가 바로
+채웁니다. 되돌리기는 그 경우에도 그대로 제공합니다.
+
+## 되돌리기
+
+채우기 전 값을 기록해 두었다가, 채운 직후 12초간 **되돌리기** 버튼을 띄웁니다.
+`OVERWRITE_EXISTING=false`라 되돌릴 수단이 없으면 잘못 채워진 칸을 손으로 지워야 합니다.
+
+텍스트·select·radio를 각각 이전 상태로 복원합니다.
+
 ## 문항별 자소서 매칭
 
 지원서에 자소서 문항이 2개 이상인 것은 예외가 아니라 기본값입니다. 그래서 서버는
@@ -165,6 +190,41 @@ bcrypt cost 12는 해시 비교 한 번에 수백 ms를 쓰고 libuv 스레드�
 > 제한 자체는 `test/throttle.e2e-spec.ts`가 켠 채로 따로 검증합니다.
 > 이 플래그는 `.env.example`에 없습니다 — 운영에서 켜지면 인증 API가 무제한이 됩니다.
 
+## 스키마 변경
+
+스키마는 **마이그레이션으로만** 바꿉니다.
+
+```bash
+cd server
+npm run migration:generate -- src/database/migrations/<이름>
+npm run migration:run
+```
+
+`NODE_ENV=production`이면 `DB_SYNCHRONIZE` 값과 무관하게 `synchronize`가 꺼집니다.
+환경변수 설정 실수를 코드에서 한 번 더 막는 것입니다.
+
+TypeORM `synchronize`는 컬럼명을 바꾸면 rename이 아니라 `DROP` + `ADD`로 처리합니다.
+`resumes`의 `education`·`careers`·`certificates`·`essays`는 전부 JSONB고 사용자 이력
+전체가 그 안에 있으므로, **컬럼명 하나 정리하는 커밋이 전 사용자의 이력서를 지웁니다.**
+
+`src/database/migrations/`의 `InitialSchema`가 기준점입니다. 빈 DB에 이것만 돌려도
+서버가 그대로 뜹니다.
+
+## CI
+
+`.github/workflows/ci.yml`이 push와 PR마다 네 가지를 돌립니다.
+
+| 작업 | 내용 |
+| --- | --- |
+| 서버 | `tsc --noEmit` · `nest build` · 단위 · 통합(testcontainers) |
+| 웹 | `tsc --noEmit` · Vitest · `next build` |
+| 모바일 | `tsc --noEmit` |
+| 확장 | `node --check content.js` · `manifest.json` 형식 |
+
+타입이 `server`/`web`/`mobile` 세 곳에 복사돼 있어 **한 곳만 고쳐도 나머지는 그대로
+컴파일됩니다.** 깨진 사실이 앱을 켜야만 드러나므로 세 워크스페이스를 함께 돌립니다.
+확장은 빌드 과정이 없어 컴파일러가 봐 주지 않으므로 문법 검사라도 겁니다.
+
 ## 테스트
 
 ```bash
@@ -181,7 +241,7 @@ cd web && npm test           # Vitest — web↔mobile 규칙 일치, 폼 변환
 TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/autofill_fit_test npm run test:e2e
 ```
 
-**206개 테스트가 실제로 있었던 결함을 고정합니다.** 각 테스트는 해당 버그를 코드에
+**220개 테스트가 실제로 있었던 결함을 고정합니다.** 각 테스트는 해당 버그를 코드에
 다시 넣었을 때 실패하는 것을 확인했습니다 — 통과만 하는 테스트는 안전망이 아닙니다.
 
 | 테스트 | 고정하는 결함 |
@@ -190,7 +250,7 @@ TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/autofill_fit_test 
 | `server/.../mask.util.spec.ts` | 마스킹이 조용히 약해지는 회귀 |
 | `web/test/completeness-parity.test.ts` | web과 mobile의 완성도 규칙이 갈라짐 |
 | `web/test/resume-form.test.ts` | 빈 문자열을 보내 저장 전체가 400으로 실패 |
-| `web/test/extension/content-script.test.ts` | 더미 프로필이 실제 지원서에 채워짐 · 자소서가 무관한 textarea에 주입됨 · **모든 장문 칸에 같은 답변이 복사됨** · 제한 초과 답변이 잘린 채 들어감 |
+| `web/test/extension/content-script.test.ts` | 더미 프로필이 실제 지원서에 채워짐 · 자소서가 무관한 textarea에 주입됨 · **모든 장문 칸에 같은 답변이 복사됨** · 제한 초과 답변이 잘린 채 들어감 · **확인 없이 즉시 채워짐** · 되돌릴 수 없음 |
 | `server/test/auth.e2e-spec.ts` | 가입 본문으로 role 주입 · 비활성 계정이 기존 토큰으로 통과 |
 | `server/test/resume.e2e-spec.ts` | 빈 문자열·JSONB 내부 형식 오류가 저장을 통과 · `autofill.essays`가 문항을 뭉개서 내려줌 |
 | `server/test/admin.e2e-spec.ts` | 사유 없는 개인정보 열람 · 권한 회수 후 기존 토큰 통과 · 삭제 시 고아 데이터 |
