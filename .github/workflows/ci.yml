@@ -2,6 +2,10 @@ name: CI
 
 # 복사된 타입이 세 곳에 있어서, 한 곳만 고쳐도 나머지는 그대로 컴파일된다.
 # 깨진 사실이 앱을 켜야만 드러나므로 push마다 세 워크스페이스를 함께 돌린다.
+#
+# Node 22 이상이 필요하다. jsdom과 supertest가 쓰는 undici가
+# webidl.util.markAsUncloneable을 요구하는데 Node 20에는 없어서,
+# 통합 테스트와 확장 테스트가 통째로 "Test suite failed to run"이 된다.
 on:
   push:
     branches: [main]
@@ -21,7 +25,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
 
@@ -54,7 +58,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -85,7 +89,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
@@ -106,7 +110,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       # content.js는 빌드 과정이 없는 단일 IIFE라 컴파일러가 봐 주지 않는다.
       # 최소한 문법이 깨진 채로 머지되는 것은 막는다.
