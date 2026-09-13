@@ -65,6 +65,13 @@ jobs:
       - run: npm ci
         working-directory: web
 
+      # completeness-parity 테스트는 mobile/src의 실제 구현을 import한다.
+      # mobile의 tsconfig가 expo/tsconfig.base를 extends하므로,
+      # mobile의 의존성이 없으면 트랜스폼 단계에서 tsconfig를 못 찾고 죽는다.
+      - name: 모바일 의존성 (파리티 테스트용)
+        run: npm ci --ignore-scripts
+        working-directory: mobile
+
       - name: 타입 검사
         run: npx tsc --noEmit
         working-directory: web
