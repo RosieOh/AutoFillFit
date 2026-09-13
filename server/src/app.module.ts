@@ -23,9 +23,32 @@ import { UsersModule } from './users/users.module';
         database: config.get<string>('DB_DATABASE', 'autofill_fit'),
         // 엔티티 자동 로드 (TypeOrmModule.forFeature 등록분)
         autoLoadEntities: true,
-        // 운영에서는 반드시 false로 두고 마이그레이션을 사용할 것
-        synchronize: config.get<string>('DB_SYNCHRONIZE') === 'true',
-        logging: config.get<string>('NODE_ENV') !== 'production',
+        /*
+         * 운영에서는 절대 켜지 않는다.
+         *
+         * TypeORM synchronize는 컬럼명을 바꾸면 rename이 아니라 DROP + ADD로
+         * 처리한다. resumes의 education·careers·certificates·essays는 전부
+         * JSONB고 사용자 이력 전체가 그 안에 있으므로, 컬럼명 하나 정리하는
+         * 커밋이 전 사용자의 이력서를 지운다.
+         *
+         * 환경변수 설정 실수를 코드에서 한 번 더 막는다.
+         * 스키마 변경은 src/database/migrations/로만 한다.
+         */
+        synchronize:
+          config.get<string>('NODE_ENV') === 'production'
+            ? false
+            : config.get<string>('DB_SYNCHRONIZE') === 'true',
+        migrations: [__dirname + '/database/migrations/*{.ts,.js}'],
+        /*
+         * SQL 로깅. DB_LOGGING이 있으면 그 값을 따르고, 없으면 개발에서만 켠다.
+         * NODE_ENV로만 판단하면 "로그를 끄려고 production으로 두는" 편법이 생기는데,
+         * 그러면 synchronize 가드 같은 다른 production 동작까지 함께 딸려온다.
+         */
+        logging:
+          config.get<string>(
+            'DB_LOGGING',
+            config.get<string>('NODE_ENV') === 'production' ? 'false' : 'true',
+          ) === 'true',
       }),
     }),
     /**

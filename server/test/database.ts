@@ -67,9 +67,15 @@ export function applyDbEnv(config: TestDbConfig): void {
   process.env.DB_SYNCHRONIZE = 'true';
   process.env.JWT_SECRET = 'integration-test-secret-key-1234567890';
   process.env.JWT_EXPIRES_IN = '1h';
-  // AppModule은 NODE_ENV !== 'production'일 때 SQL을 전부 찍는다.
-  // 테스트 출력이 파묻히므로 production으로 둔다(다른 동작 차이는 없다).
-  process.env.NODE_ENV = 'production';
+  /*
+   * SQL 로그를 끈다. 켜 두면 테스트 출력이 쿼리에 파묻힌다.
+   *
+   * 예전에는 NODE_ENV='production'으로 껐는데, 그러면 production에만 걸리는
+   * 다른 동작(synchronize 강제 off)까지 함께 켜져 스키마가 만들어지지 않는다.
+   * 로깅만 끄는 플래그를 따로 쓴다.
+   */
+  process.env.NODE_ENV = 'test';
+  process.env.DB_LOGGING = 'false';
 
   /*
    * 요청 제한을 끈다.
