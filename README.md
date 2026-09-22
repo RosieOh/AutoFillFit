@@ -5,7 +5,7 @@
 
 ```
 .
-├── content.js · manifest.json · styles.css   Chrome 확장 (MV3)
+├── content.js · config.js · manifest.json · styles.css   Chrome 확장 (MV3)
 ├── server/                                    Nest.js + TypeORM + PostgreSQL
 ├── web/                                       Next.js 14 대시보드 + 백오피스
 └── mobile/                                    Expo(React Native) 앱
@@ -48,9 +48,16 @@
 | 페이지 → 확장 | `SYNC` | 인적사항 · 학력 · 경력 · 자격증 · 자소서 문항 전체 (토큰 없음) |
 | 확장 → 페이지 | `SYNCED` | 전달 완료 시각 |
 
-**신뢰 origin에서만 응답합니다** (`content.js`의 `TRUSTED_ORIGINS`). 아무 사이트나
-확장 설치 여부와 자동 채움 이력을 읽어가지 못하게 막는 것이 목적이며,
-운영 도메인을 배포할 때 이 목록에 추가해야 합니다.
+**신뢰 origin에서만 응답합니다.** 아무 사이트나 확장 설치 여부와 자동 채움 이력을
+읽어가지 못하게 막는 것이 목적입니다.
+
+목록은 [`config.js`](config.js)에 있습니다. `content.js`는 빌드 과정이 없어
+환경변수를 주입할 수 없으므로, 배포할 때 고쳐야 하는 값만 이 파일에 모아 두고
+manifest가 `content.js`보다 먼저 읽게 했습니다(content script끼리는 같은 isolated
+world를 공유합니다).
+
+> **이 파일을 고치지 않으면 대시보드를 어디에 올리든 '이력서 전달'이 되지 않습니다.**
+> 배포 전 점검 목록의 첫 줄입니다.
 
 content script는 `document_idle`에, 대시보드는 hydration 후에 준비되어 순서가 보장되지
 않으므로 `PING`은 2.5초 동안 재시도합니다.
@@ -166,6 +173,30 @@ SYNC가 서버의 저장 시각을 함께 넘기고, 확인 패널이 항상 그
 - 해당 입력칸에 남는 표시 — 토스트가 사라진 뒤에도 어느 칸에 손대야 하는지 남아야
   합니다. 사용자가 그 칸을 누르면 표시를 거둡니다.
 
+## 비밀번호 재설정
+
+재설정 경로가 없을 때는 비밀번호를 잊으면 그 계정이 끝이었습니다. 관리자에게
+부탁할 창구도, 메일을 보낼 방법도 없었습니다.
+
+| 메서드 | 경로 | |
+| --- | --- | --- |
+| `POST` | `/auth/forgot-password` | 링크 요청 |
+| `POST` | `/auth/reset-password` | 링크로 비밀번호 변경 |
+
+**가입 여부를 응답으로 구분할 수 없습니다.** 없는 계정에도 같은 응답과 같은 안내
+문구를 줍니다 — 다르게 답하면 이 화면이 곧 회원 목록 조회기가 됩니다.
+
+토큰은 32바이트 난수이고 **원문을 저장하지 않습니다**(sha256 해시만). DB가 유출돼도
+그 값으로 비밀번호를 바꿀 수 없습니다. 유효 시간은 1시간, **한 번만** 쓸 수 있고,
+새로 요청하면 이전 링크는 무효가 됩니다.
+
+잠긴 계정도 재설정하면 잠금이 함께 풀립니다 — 메일로 본인임을 증명했기 때문입니다.
+
+`SMTP_URL`이 없으면 메일을 보내는 대신 **링크를 로그에 남깁니다.** 개발·테스트에서
+메일 서버를 요구하지 않기 위해서이고, 보낸 척하지 않으려는 것이기도 합니다.
+메일에 들어갈 링크의 출처는 `WEB_ORIGIN`으로 고정합니다 — 요청 헤더의 Origin을
+그대로 쓰면 남의 메일에 공격자 도메인 링크를 심을 수 있습니다.
+
 ## 개인정보와 계정
 
 가입할 때 **이용약관**과 **개인정보 수집·이용**에 각각 동의를 받습니다. 둘 다 필수이고,
@@ -280,7 +311,7 @@ cd web && npm test           # Vitest — web↔mobile 규칙 일치, 폼 변환
 TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/autofill_fit_test npm run test:e2e
 ```
 
-**244개 테스트가 실제로 있었던 결함을 고정합니다.** 각 테스트는 해당 버그를 코드에
+**260개 테스트가 실제로 있었던 결함을 고정합니다.** 각 테스트는 해당 버그를 코드에
 다시 넣었을 때 실패하는 것을 확인했습니다 — 통과만 하는 테스트는 안전망이 아닙니다.
 
 | 테스트 | 고정하는 결함 |
@@ -297,6 +328,7 @@ TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/autofill_fit_test 
 | `server/test/lockout.e2e-spec.ts` | 무제한 비밀번호 추측 · 성공 후에도 남는 실패 횟수 |
 | `server/test/throttle.e2e-spec.ts` | 제한 없는 로그인·가입 요청 |
 | `server/test/ops.e2e-spec.ts` | 요청 ID 없이 추적 불가 · 외부 헤더를 그대로 로그에 넣음 · DB가 죽어도 health가 ok |
+| `server/test/password-reset.e2e-spec.ts` | 가입 여부가 응답으로 새어 나감 · 링크 재사용 · 만료 무시 · 탈퇴 후 남는 고아 토큰 |
 
 확장은 빌드 과정이 없는 단일 IIFE라 jsdom에서 그대로 실행해 검증합니다
 (`offsetParent` shim이 필요합니다 — jsdom은 레이아웃을 계산하지 않습니다).
