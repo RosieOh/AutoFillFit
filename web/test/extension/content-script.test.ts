@@ -1361,3 +1361,61 @@ describe('남은 필수 칸', () => {
     expect(document.querySelector('.autofill-fit-remaining')).toBeNull();
   });
 });
+
+/**
+ * 신뢰 origin 설정.
+ *
+ * content.js는 빌드 과정이 없어 환경변수를 주입할 수 없다. 배포할 때
+ * 고쳐야 하는 값은 config.js에 모아 두고 manifest가 먼저 읽게 한다.
+ * 이 파일을 고치지 않으면 대시보드를 어디에 올리든 브리지가 응답하지 않는다.
+ */
+describe('신뢰 origin 설정', () => {
+  const CONFIG_JS = readFileSync(
+    path.resolve(__dirname, '../../../config.js'),
+    'utf-8',
+  );
+
+  /** config.js를 먼저 평가한 뒤 content.js를 같은 스코프에서 실행한다. */
+  async function loadWithConfig(origins: string[]) {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    new Function(
+      'ORIGINS',
+      `var AUTOFILL_FIT_TRUSTED_ORIGINS = ORIGINS;\n${CONTENT_JS}`,
+    )(origins);
+    await new Promise((r) => setTimeout(r, 30));
+  }
+
+  it('config.js가 로컬 개발 origin을 담고 있다', () => {
+    expect(CONFIG_JS).toContain('AUTOFILL_FIT_TRUSTED_ORIGINS');
+    expect(CONFIG_JS).toContain('http://localhost:3001');
+  });
+
+  it('설정에 있는 origin에서는 버튼을 띄우지 않는다 — 대시보드다', async () => {
+    vi.stubGlobal('location', {
+      ...window.location,
+      origin: 'https://dash.example.com',
+      host: 'dash.example.com',
+    });
+    installChrome(fullSync());
+    document.body.innerHTML = '<form><input name="name"></form>';
+
+    await loadWithConfig(['https://dash.example.com']);
+
+    expect(document.getElementById('autofill-fit-root')).toBeNull();
+  });
+
+  it('설정에 없는 운영 도메인은 그냥 지원서 사이트로 본다', async () => {
+    vi.stubGlobal('location', {
+      ...window.location,
+      origin: 'https://dash.example.com',
+      host: 'dash.example.com',
+    });
+    installChrome(fullSync());
+    document.body.innerHTML = '<form><input name="name"></form>';
+
+    // 운영 도메인을 config.js에 넣지 않은 상태
+    await loadWithConfig(['http://localhost:3000']);
+
+    expect(document.getElementById('autofill-fit-root')).not.toBeNull();
+  });
+});

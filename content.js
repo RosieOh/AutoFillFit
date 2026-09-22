@@ -1821,15 +1821,14 @@
   /**
    * 이 페이지들에만 응답한다.
    * 아무 사이트나 확장 존재 여부와 이력을 읽어가지 못하게 막는 것이 목적이다.
-   * 운영 도메인을 배포할 때 여기에 추가해야 한다.
+   * 목록은 config.js에 있다 — 배포할 때 그 파일에 운영 도메인을 추가한다.
    */
-  const TRUSTED_ORIGINS = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:3021',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:3001'
-  ];
+  const TRUSTED_ORIGINS =
+    typeof AUTOFILL_FIT_TRUSTED_ORIGINS !== 'undefined' &&
+    Array.isArray(AUTOFILL_FIT_TRUSTED_ORIGINS)
+      ? AUTOFILL_FIT_TRUSTED_ORIGINS
+      // config.js를 못 읽은 경우의 최소 기본값. 로컬 개발만 된다.
+      : ['http://localhost:3000', 'http://localhost:3001'];
 
   const EXTENSION_VERSION =
     (chrome && chrome.runtime && chrome.runtime.getManifest)

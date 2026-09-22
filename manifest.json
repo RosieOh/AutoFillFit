@@ -3,12 +3,23 @@
   "name": "AutoFill-Fit",
   "version": "1.0.0",
   "description": "채용 사이트 지원서의 입력창을 자동으로 감지해 내 정보를 채워주는 확장 프로그램",
-  "permissions": ["activeTab", "storage"],
+  "permissions": [
+    "activeTab",
+    "storage"
+  ],
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content.js"],
-      "css": ["styles.css"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "config.js",
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
