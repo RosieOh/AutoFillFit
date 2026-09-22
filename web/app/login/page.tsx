@@ -214,6 +214,17 @@ function LoginForm() {
         </div>
 
         <p className="mt-4 text-center text-sm text-slate-500">
+          {mode === 'login' ? (
+            <>
+              <a
+                href="/forgot-password"
+                className="font-medium text-slate-600 underline underline-offset-2 transition-colors hover:text-slate-900"
+              >
+                비밀번호를 잊으셨나요?
+              </a>
+              <br />
+            </>
+          ) : null}
           {mode === 'login' ? '계정이 없으신가요?' : '이미 계정이 있으신가요?'}{' '}
           <button
             type="button"

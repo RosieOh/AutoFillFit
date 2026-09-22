@@ -7,7 +7,10 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as bcrypt from 'bcrypt';
-import { DataSource, Repository } from 'typeorm';
+import { createHash, randomBytes } from 'node:crypto';
+import { DataSource, LessThan, Repository } from 'typeorm';
+import { MailService } from '../common/mail/mail.service';
+import { PasswordResetToken } from './entities/password-reset-token.entity';
 import { Profile } from '../users/entities/profile.entity';
 import { User, UserRole } from '../users/entities/user.entity';
 import { LoginDto } from './dto/login.dto';
@@ -16,6 +19,14 @@ import { SignupDto } from './dto/signup.dto';
 import { JwtPayload } from './strategies/jwt.strategy';
 
 const BCRYPT_ROUNDS = 12;
+
+/**
+ * 재설정 링크 유효 시간.
+ *
+ * 길면 메일함이 뚫렸을 때 창이 넓어지고, 너무 짧으면 메일이 도착하기 전에
+ * 만료된다. 한 시간이면 둘 다 감당할 수 있다.
+ */
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 export interface AuthResponse {
   accessToken: string;
@@ -35,6 +46,9 @@ export class AuthService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(PasswordResetToken)
+    private readonly resetTokenRepository: Repository<PasswordResetToken>,
+    private readonly mailService: MailService,
     private readonly dataSource: DataSource,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
@@ -170,6 +184,96 @@ export class AuthService {
     const remainingMs = (user.lockedUntil?.getTime() ?? 0) - Date.now();
     const minutes = Math.max(1, Math.ceil(remainingMs / 60_000));
     return `로그인 시도가 너무 많았습니다. ${minutes}분 후에 다시 시도해 주세요.`;
+  }
+
+  /**
+   * 재설정 링크를 보낸다.
+   *
+   * 가입 여부와 무관하게 항상 같은 응답을 준다. "가입되지 않은 이메일입니다"를
+   * 돌려주면 그 화면이 곧 회원 목록 조회기가 된다.
+   */
+  async requestPasswordReset(email: string, origin: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    const user = await this.userRepository.findOne({
+      where: { email: normalized },
+    });
+
+    // 없는 계정이어도 조용히 끝낸다.
+    if (!user || !user.isActive) return;
+
+    /*
+     * 이전에 보낸 링크는 무효로 만든다.
+     * 여러 개가 동시에 살아 있으면 오래된 메일로도 바꿀 수 있다.
+     */
+    await this.resetTokenRepository.delete({ userId: user.id });
+
+    const token = randomBytes(32).toString('hex');
+    await this.resetTokenRepository.save(
+      this.resetTokenRepository.create({
+        userId: user.id,
+        tokenHash: this.hashToken(token),
+        expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+      }),
+    );
+
+    const link = `${origin}/reset-password?token=${token}`;
+    const minutes = Math.round(RESET_TOKEN_TTL_MS / 60000);
+
+    await this.mailService.send({
+      to: user.email,
+      subject: '[AutoFill-Fit] 비밀번호 재설정',
+      text:
+        `아래 링크에서 비밀번호를 다시 설정할 수 있습니다.\n\n` +
+        `${link}\n\n` +
+        `이 링크는 ${minutes}분 동안, 한 번만 사용할 수 있습니다.\n` +
+        `요청한 적이 없다면 이 메일을 무시하세요. 비밀번호는 바뀌지 않습니다.`,
+    });
+  }
+
+  /**
+   * 링크로 비밀번호를 바꾼다.
+   *
+   * 토큰은 한 번만 쓸 수 있다. 메일이 전달되는 경로는 안전하지 않으므로,
+   * 한 번 쓴 뒤에는 같은 링크가 다시 열리지 않아야 한다.
+   */
+  async resetPassword(token: string, password: string): Promise<void> {
+    // 만료된 것들은 이 기회에 치운다.
+    await this.resetTokenRepository.delete({ expiresAt: LessThan(new Date()) });
+
+    const record = await this.resetTokenRepository.findOne({
+      where: { tokenHash: this.hashToken(token) },
+    });
+
+    if (!record || record.usedAt || record.expiresAt.getTime() <= Date.now()) {
+      throw new UnauthorizedException(
+        '링크가 만료되었거나 이미 사용되었습니다. 다시 요청해 주세요.',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.update(User, record.userId, {
+        password: passwordHash,
+        // 잠겨 있었다면 함께 풀어 준다. 본인이 맞다는 것을 메일로 증명했다.
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      });
+      await manager.update(PasswordResetToken, record.id, {
+        usedAt: new Date(),
+      });
+    });
+  }
+
+  /**
+   * 토큰은 해시만 저장한다.
+   *
+   * DB가 유출되면 원문 토큰으로 아무 계정의 비밀번호나 바꿀 수 있다.
+   * 비밀번호를 해시하는 것과 같은 이유다. 토큰은 32바이트 난수라
+   * 사전 공격이 불가능하므로 salt 없는 sha256으로 충분하다.
+   */
+  private hashToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
   }
 
   private buildAuthResponse(user: User): AuthResponse {

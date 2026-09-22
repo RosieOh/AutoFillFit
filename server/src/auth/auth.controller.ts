@@ -5,12 +5,18 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthResponse, AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import {
+  ForgotPasswordDto,
+  ResetPasswordDto,
+} from './dto/password-reset.dto';
 import { SignupDto } from './dto/signup.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuthUser } from './strategies/jwt.strategy';
@@ -43,6 +49,48 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto): Promise<AuthResponse> {
     return this.authService.login(dto);
+  }
+
+  /**
+   * POST /auth/forgot-password — 재설정 링크 요청
+   *
+   * 가입 여부와 무관하게 항상 같은 응답을 준다. 다르게 답하면 이 경로가
+   * 곧 회원 목록 조회기가 된다. 그래서 제한도 더 좁게 건다.
+   */
+  @Post('forgot-password')
+  @Throttle({ default: { ttl: 3_600_000, limit: 5 } })
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(
+    @Body() dto: ForgotPasswordDto,
+    @Req() req: Request,
+  ): Promise<{ ok: true }> {
+    await this.authService.requestPasswordReset(dto.email, this.originOf(req));
+    return { ok: true };
+  }
+
+  /** POST /auth/reset-password — 링크로 비밀번호 변경 */
+  @Post('reset-password')
+  @Throttle({ default: { ttl: 3_600_000, limit: 10 } })
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() dto: ResetPasswordDto): Promise<{ ok: true }> {
+    await this.authService.resetPassword(dto.token, dto.password);
+    return { ok: true };
+  }
+
+  /**
+   * 메일에 넣을 링크의 출처.
+   *
+   * 요청 헤더의 Origin을 그대로 쓰면 남의 메일에 공격자 도메인 링크를
+   * 심을 수 있다. 설정된 값을 우선 쓰고, 없을 때만 요청 Origin으로 내려간다.
+   */
+  private originOf(req: Request): string {
+    const configured = process.env.WEB_ORIGIN;
+    if (configured && configured.trim() !== '') return configured.trim();
+
+    const origin = req.headers.origin;
+    return typeof origin === 'string' && origin !== ''
+      ? origin
+      : 'http://localhost:3000';
   }
 
   /**
