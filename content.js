@@ -168,7 +168,8 @@
       key: 'name',
       test: /(^|[^a-z])(name|username|user[-_ ]?name|fullname|full[-_ ]?name|applicant|성명|이름|지원자)/i,
       // 이름이 아닌 'name' 계열 오탐 차단
-      exclude: /(company|corp|school|univ|file|card|nickname|domain|account|bank|project|team|product|major|degree|certificate|회사|학교|파일|은행|전공|자격)/i,
+      // '영문이름'에 한글 이름이 들어가면 그대로 제출된다 — 실제 그리팅 양식에서 그랬다.
+      exclude: /(company|corp|school|univ|file|card|nickname|domain|account|bank|project|team|product|major|degree|certificate|english|회사|학교|파일|은행|전공|자격|영문)/i,
       value: () => profile.name
     },
 
@@ -182,7 +183,8 @@
     {
       key: 'address',
       test: /(address|addr|주소|거주지|소재지)/i,
-      exclude: /(e-?mail|이메일|메일|ip[-_ ]?address|zip|postal|우편)/i,
+      // 상세주소 칸에 전체 주소를 넣지 않는다. 주소를 나눠 받는 양식이 많다.
+      exclude: /(e-?mail|이메일|메일|ip[-_ ]?address|zip|postal|detail|우편|상세)/i,
       value: () => profile.address
     },
     {
@@ -323,6 +325,19 @@
       });
     }
 
+    /*
+     * 3-3.5 Ark UI / Zag.js(Chakra UI v3) 필드 규약.
+     *
+     * 라벨이 [data-part="label"]에 있고, for가 내부 입력을 가리키지 않는다.
+     * 그리팅이 이 규약을 쓰는데 이걸 못 읽어서 이메일 칸을 아예 못 찾았고,
+     * 연락처는 옆의 국가 버튼(🇰🇷 +82)을 라벨로 착각했다.
+     */
+    if (parts.join('').trim() === '') {
+      const fieldRoot = el.closest('[data-scope="field"][data-part="root"]');
+      const fieldLabel = fieldRoot && fieldRoot.querySelector('[data-part="label"]');
+      if (fieldLabel) parts.push(fieldLabel.textContent);
+    }
+
     // 3-4. label을 못 찾으면 부모 컨테이너를 보되, 그 안에 입력이 하나뿐일 때만.
     //      입력이 여러 개면 이웃 필드의 라벨까지 흡수해 이름 칸에 이메일이 들어간다.
     if (parts.join('').trim() === '') {
@@ -353,6 +368,113 @@
       .join(' ')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * 3.9 그리팅(greetinghr.com) 양식
+   *
+   * 그리팅은 입력칸마다 의미 있는 name 경로를 붙인다
+   * (basicInformation.name, educationalBackground.universities.0.schoolName …).
+   * 기업이 달라도 경로는 같다. 라벨을 추측하는 것보다 확실하므로 이걸 먼저 본다.
+   *
+   * 라벨로만 보던 때에는 실제 양식에서 이런 일이 있었다.
+   *  - '영문이름'에 한글 이름
+   *  - '상세주소'에 전체 주소
+   *  - 고등학교·대학교·대학원 '학교명' 세 칸 모두에 같은 대학교 이름
+   * ------------------------------------------------------------------ */
+  const GREETING_NAME = /^(basicInformation|personalInformation|educationalBackground|workHistory|languagesCertificationsAndOtherActivity|additionalQuestion)\./;
+
+  /** 학력 한 건이 고교·대학·대학원 중 어디에 속하는가 */
+  function educationLevel(item) {
+    switch (item.degree) {
+      case 'HIGH_SCHOOL': return 'highSchool';
+      case 'ASSOCIATE':
+      case 'BACHELOR': return 'universities';
+      case 'MASTER':
+      case 'DOCTOR': return 'graduateSchools';
+    }
+    // 학위가 비어 있으면 학교 이름으로 판단한다.
+    const name = item.schoolName || '';
+    if (/고등학교|고교/.test(name)) return 'highSchool';
+    if (/대학원/.test(name)) return 'graduateSchools';
+    return 'universities';
+  }
+
+  function educationAt(level, index) {
+    const matched = education.filter((item) => educationLevel(item) === level);
+    return matched[index] || null;
+  }
+
+  function educationValue(item, field) {
+    if (!item) return undefined;
+    switch (field) {
+      case 'schoolName': return { key: 'schoolName', value: item.schoolName };
+      case 'majors.0': return { key: 'major', value: item.major };
+      case 'gpa.score': return { key: 'gpa', value: item.gpa };
+    }
+    return undefined;
+  }
+
+  function careerValue(item, field) {
+    if (!item) return undefined;
+    switch (field) {
+      case 'companyName': return { key: 'companyName', value: item.companyName };
+      case 'department': return { key: 'department', value: item.department };
+      case 'positionRank': return { key: 'position', value: item.position };
+      case 'dutiesResponsibility': return { key: 'mainTasks', value: item.mainTasks };
+    }
+    return undefined;
+  }
+
+  function certificateValue(item, field) {
+    if (!item) return undefined;
+    switch (field) {
+      case 'credentials': return { key: 'certificateName', value: item.name };
+      case 'issuingAgency': return { key: 'certificateIssuer', value: item.issuer };
+    }
+    return undefined;
+  }
+
+  /** 그리팅 name 경로 → 넣을 값. undefined면 건드리지 않는다. */
+  function greetingValue(name) {
+    let m;
+    switch (name) {
+      case 'basicInformation.name': return { key: 'name', value: profile.name };
+      case 'basicInformation.phoneNumber.nationalNumber': return { key: 'phone', value: profile.phone };
+      case 'personalInformation.currentAddress.postalCode': return { key: 'zipCode', value: profile.zipCode };
+      case 'personalInformation.currentAddress.address': return { key: 'address', value: profile.address };
+    }
+    if ((m = name.match(/^educationalBackground\.highSchool\.(\w+)$/))) {
+      return educationValue(educationAt('highSchool', 0), m[1]);
+    }
+    if ((m = name.match(/^educationalBackground\.(universities|graduateSchools)\.(\d+)\.(.+)$/))) {
+      return educationValue(educationAt(m[1], Number(m[2])), m[3]);
+    }
+    if ((m = name.match(/^workHistory\.workExperiences\.(\d+)\.(\w+)$/))) {
+      return careerValue(careers[Number(m[1])], m[2]);
+    }
+    if ((m = name.match(/^languagesCertificationsAndOtherActivity\.certificatesLicenses\.(\d+)\.(\w+)$/))) {
+      return certificateValue(certificates[Number(m[1])], m[2]);
+    }
+    // 영문이름·상세주소·국적·어학·수상·봉사 … 넣을 데이터가 없다.
+    return undefined;
+  }
+
+  /**
+   * 그리팅 칸이면 처리 방법을 돌려준다.
+   * null: 그리팅 칸이 아니다 / { skip: true }: 건드리지 않는다 / { key, value }: 넣는다
+   */
+  function greetingTarget(el) {
+    const name = el.name || '';
+    if (!GREETING_NAME.test(name)) return null;
+
+    // 추가 질문 textarea는 자소서 문항이다 — 문항 매칭에 맡긴다.
+    // 같은 경로의 input은 '지원 경로 직접입력' 같은 칸이라 건드리지 않는다.
+    if (/^additionalQuestion\./.test(name)) {
+      return el.tagName.toLowerCase() === 'textarea' ? null : { skip: true };
+    }
+
+    return greetingValue(name) || { skip: true };
   }
 
   /* ------------------------------------------------------------------ *
@@ -962,6 +1084,37 @@
     const skipped = [];
 
     /*
+     * 0패스 — 그리팅처럼 name 경로가 의미를 알려주는 칸.
+     * 경로가 정한 칸은 다른 패스가 다시 보지 않는다. 그러지 않으면
+     * 그리팅의 '담당업무' textarea를 자소서 문항으로 착각한다.
+     */
+    const handled = new Set();
+
+    for (const el of all) {
+      const target = greetingTarget(el);
+      if (!target) continue;
+      handled.add(el);
+      if (target.skip) continue;
+      if (target.value == null || String(target.value).trim() === '') continue;
+
+      // 우편번호 검색 팝업으로만 받는 칸이다. 넣을 수 없으니 직접 하라고 알린다.
+      if (el.readOnly && isVisible(el) && !el.value) {
+        skipped.push({ label: fieldLabelText(el), reason: 'read-only', el: el });
+        continue;
+      }
+      if (!isFillable(el)) continue;
+
+      items.push({
+        el: el,
+        kind: isCombobox(el) ? 'combobox' : 'text',
+        key: target.key,
+        label: fieldLabelText(el),
+        value: formatForField(el, target.key, String(target.value)),
+        defaultOn: true
+      });
+    }
+
+    /*
      * 1패스 — 장문 칸을 먼저 모은다.
      * 한 칸씩 즉시 배정하면 어느 문항이 이미 쓰였는지 알 수 없어
      * 같은 답변이 여러 칸에 들어간다.
@@ -969,6 +1122,7 @@
     const longTextFields = [];
 
     for (const el of all) {
+      if (handled.has(el)) continue;
       if (!isFillable(el)) continue;
 
       const tag = el.tagName.toLowerCase();
@@ -1034,6 +1188,7 @@
     const longTextSet = new Set(longTextFields.map((field) => field.el));
 
     for (const el of all) {
+      if (handled.has(el)) continue;
       if (longTextSet.has(el)) continue;
       if (!isFillable(el)) continue;
 
@@ -1043,7 +1198,7 @@
 
       items.push({
         el: el,
-        kind: 'text',
+        kind: isCombobox(el) ? 'combobox' : 'text',
         key: matched.key,
         label: fieldLabelText(el),
         value: formatForField(el, matched.key, matched.value),
@@ -1111,16 +1266,142 @@
     return { items, skipped, notSynced: false };
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function isCombobox(el) {
+    return el.getAttribute('role') === 'combobox';
+  }
+
+  /**
+   * 사람이 누른 것처럼 누른다.
+   * Zag.js 컴포넌트는 click만으로는 반응하지 않고 pointer 이벤트 순서를 본다.
+   */
+  function press(target) {
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach((type) => {
+      const Ctor = type.indexOf('pointer') === 0 && typeof PointerEvent === 'function'
+        ? PointerEvent
+        : MouseEvent;
+      target.dispatchEvent(new Ctor(type, { bubbles: true }));
+    });
+    target.click();
+  }
+
+  /**
+   * 확정된 combobox를 비운다.
+   *
+   * 입력칸만 비우면 blur 때 Ark UI가 확정값으로 되살린다 — 실제 그리팅에서
+   * '되돌렸습니다'라고 해 놓고 학교명·전공이 그대로 남았다.
+   * 컴포넌트가 제공하는 '지우기' 버튼을 누르는 게 확실하다.
+   */
+  function clearCombobox(el) {
+    const root = el.closest('[data-scope="combobox"][data-part="root"]');
+    const clear = root && root.querySelector('[data-part="clear-trigger"]');
+    if (clear) {
+      press(clear);
+      return;
+    }
+
+    /*
+     * 지우기 버튼이 없으면 입력칸을 비운다. 반드시 포커스를 먼저 준다.
+     * 포커스 없이 blur()를 부르면 blur 이벤트가 나지 않아, 화면은 빈칸인데
+     * 컴포넌트 안에는 확정값이 남은 채로 제출된다. 포커스를 줬다 빼야
+     * 컴포넌트가 진짜 결과(비움 또는 되살림)를 드러내고, 그걸 확인할 수 있다.
+     */
+    el.focus();
+    setNativeValue(el, '');
+    el.dispatchEvent(new InputEvent('input', {
+      bubbles: true, composed: true, inputType: 'deleteContentBackward'
+    }));
+    el.blur();
+  }
+
+  /**
+   * 검색형 자동완성(combobox)에 값을 넣는다.
+   *
+   * 그리팅의 학교명·전공·이메일이 이 형태다(Ark UI / Zag.js). 값을 직접 넣고
+   * blur하면 "목록에서 고른 게 없다"며 비워 버린다 — 실제로 확인했다.
+   * 사람이 하듯 입력해서 후보를 띄우고, 정확히 같은 후보가 있을 때만 고른다.
+   * 비슷한 후보를 고르면 '한남대학교' 자리에 '한남대학교 대학원'이 들어간다.
+   *
+   * @param options.freeText 후보 목록 없이 아무 값이나 받는 칸(이메일).
+   *   후보를 기다릴 이유가 없다 — 기다리면 지원서마다 2초씩 흘려보낸다.
+   * @returns 값을 남겼으면 true, 고르지 않고 비웠으면 false
+   */
+  async function fillCombobox(el, value, options) {
+    const freeText = Boolean(options && options.freeText);
+    el.focus();
+    setNativeValue(el, value);
+    if (el._valueTracker && typeof el._valueTracker.setValue === 'function') {
+      el._valueTracker.setValue('');
+    }
+    el.dispatchEvent(new InputEvent('input', {
+      bubbles: true, composed: true, inputType: 'insertText', data: value
+    }));
+
+    if (freeText) {
+      await sleep(50);
+      return true;
+    }
+
+    // 후보는 aria-controls가 가리키는 목록 안에서만 찾는다.
+    // 문서 전체를 뒤지면 다른 칸의 열린 목록에서 엉뚱한 후보를 고른다.
+    const listId = el.getAttribute('aria-controls');
+    const findOptions = () => {
+      const list = listId ? document.getElementById(listId) : null;
+      return list ? Array.from(list.querySelectorAll('[role="option"]')) : [];
+    };
+
+    // 학교 검색은 서버를 거치므로 바로 뜨지 않는다.
+    let candidates = [];
+    for (let i = 0; i < 20 && candidates.length === 0; i++) {
+      await sleep(100);
+      candidates = findOptions();
+    }
+
+    // 끝내 후보가 안 뜨면 값을 둔다. 받지 않는 칸이면 마지막 확인에서 걸러진다.
+    if (candidates.length === 0) return true;
+
+    const target = normalize(value);
+    const exact = candidates.find((option) => normalize(option.textContent) === target);
+
+    if (!exact) {
+      setNativeValue(el, '');
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, composed: true, inputType: 'deleteContentBackward'
+      }));
+      el.blur();
+      return false;
+    }
+
+    press(exact);
+    await sleep(120);
+    return true;
+  }
+
   /**
    * 계획대로 채운다.
    *
    * 채우기 전 값을 기록해 둔다. 기록이 없으면 되돌릴 수 없고,
    * 되돌릴 수 없으면 사용자는 잘못 채워진 칸을 손으로 지워야 한다.
+   *
+   * 넣었다고 다 들어간 게 아니다. 사이트가 값을 지우거나 거부하면
+   * '입력 완료'로 세지 않고 따로 보고한다 — 실제 그리팅 양식에서
+   * 11칸을 넣겠다고 해 놓고 4칸만 들어간 일이 있었다.
    */
-  function applyPlan(plan, chosen) {
+  async function applyPlan(plan, chosen) {
     let filled = 0;
     const summary = {};
     const undo = [];
+    const rejected = [];
+    const pending = [];
+    let usedCombobox = false;
+
+    const count = (item) => {
+      summary[item.key] = (summary[item.key] || 0) + 1;
+      filled += 1;
+    };
 
     for (let i = 0; i < plan.items.length; i++) {
       if (!chosen.has(i)) continue;
@@ -1132,29 +1413,63 @@
             ? { type: 'select', value: item.el.value, index: item.el.selectedIndex }
             : { type: 'radio', checked: item.el.checked };
 
-        if (!fillChoice(item.el, item.option)) continue;
+        if (!fillChoice(item.el, item.option)) {
+          rejected.push(item);
+          continue;
+        }
 
-        undo.push({ el: item.el, before: before });
+        undo.push({ el: item.el, before: before, label: item.label });
         highlight(item.el.closest('label') || item.el);
-      } else {
-        const before = { type: 'text', value: item.el.value };
-
-        fillField(item.el, item.value);
-        if (!valueLanded(item.el, item.value)) continue;
-
-        undo.push({ el: item.el, before: before });
-        highlight(item.el);
+        count(item);
+        continue;
       }
 
-      summary[item.key] = (summary[item.key] || 0) + 1;
-      filled += 1;
+      const before = {
+        type: item.kind === 'combobox' ? 'combobox' : 'text',
+        value: item.el.value
+      };
+
+      if (item.kind === 'combobox') {
+        usedCombobox = true;
+        const kept = await fillCombobox(item.el, item.value, {
+          freeText: item.key === 'email'
+        });
+        if (!kept) {
+          rejected.push(item);
+          continue;
+        }
+      } else {
+        fillField(item.el, item.value);
+      }
+
+      undo.push({ el: item.el, before: before, label: item.label });
+      pending.push(item);
     }
 
-    markSkippedFields(plan.skipped);
+    /*
+     * 검색형 칸은 포커스가 다음 칸으로 넘어갈 때 값을 지울 수 있다.
+     * 전부 끝난 뒤에 다시 확인해, 남지 않은 칸은 채웠다고 세지 않는다.
+     */
+    if (usedCombobox) await sleep(250);
+
+    for (const item of pending) {
+      if (valueLanded(item.el, item.value)) {
+        highlight(item.el);
+        count(item);
+      } else {
+        rejected.push(item);
+      }
+    }
+
+    const skipped = plan.skipped.concat(
+      rejected.map((item) => ({ label: item.label, reason: 'rejected', el: item.el }))
+    );
+
+    markSkippedFields(skipped);
 
     if (filled > 0) recordFillEvent(filled);
 
-    return { filled, summary, skipped: plan.skipped, undo };
+    return { filled, summary, skipped: skipped, undo };
   }
 
   /**
@@ -1171,14 +1486,34 @@
     }
   }
 
-  /** 채우기 직전 상태로 되돌린다. */
-  function revertFill(undo) {
+  /** 되돌린 뒤의 상태가 채우기 전과 같은가 */
+  function isRestored(entry) {
+    const el = entry.el;
+    const before = entry.before;
+    if (before.type === 'radio') return el.checked === before.checked;
+    return String(el.value || '') === String(before.value || '');
+  }
+
+  /**
+   * 채우기 직전 상태로 되돌린다.
+   *
+   * 되돌렸다고 말하기 전에 실제로 돌아갔는지 확인한다.
+   * 사이트 컴포넌트가 값을 되살리면 그 칸은 직접 지워야 한다고 알려야 한다.
+   *
+   * @returns 되돌리지 못한 칸 목록
+   */
+  async function revertFill(undo) {
+    let usedCombobox = false;
+
     for (const entry of undo) {
       const el = entry.el;
       const before = entry.before;
 
       try {
-        if (before.type === 'text') {
+        if (before.type === 'combobox') {
+          usedCombobox = true;
+          clearCombobox(el);
+        } else if (before.type === 'text') {
           fillField(el, before.value);
         } else if (before.type === 'select') {
           el.value = before.value;
@@ -1195,6 +1530,22 @@
         /* 페이지가 그 사이 바뀌었으면 되돌릴 대상이 없다 */
       }
     }
+
+    // combobox는 포커스가 빠질 때 값을 되살릴 수 있으므로 한 박자 쉬고 본다.
+    if (usedCombobox) {
+      if (document.activeElement && document.activeElement.blur) {
+        document.activeElement.blur();
+      }
+      await sleep(200);
+    }
+
+    return undo.filter((entry) => {
+      try {
+        return entry.el.isConnected && !isRestored(entry);
+      } catch (_) {
+        return false;
+      }
+    });
   }
 
   function highlight(el) {
@@ -1231,6 +1582,7 @@
   function fieldLabelText(el) {
     const raw = getLabelText(el) || el.getAttribute('placeholder') || el.name || '';
     const text = String(raw)
+      .replace(/\*/g, '')                          // 필수 표시
       .replace(/\s+/g, ' ')
       .replace(/^[\s]*[0-9]{1,2}\s*[.)]\s*/, '')   // 앞 번호
       .replace(/\s*[([][^)\]]*[)\]]\s*$/, '')       // 끝 괄호 안내
@@ -1300,6 +1652,7 @@
     certificateName: '자격증',
     certificateIssuer: '발급기관',
     certificateAcquiredAt: '취득일',
+    mainTasks: '담당업무',
     coverLetter: '자기소개서'
   };
 
@@ -1320,7 +1673,30 @@
 
     const tooLong = skipped.filter((item) => item.reason === 'too-long');
     const noMatch = skipped.filter((item) => item.reason === 'no-match');
+    const rejected = skipped.filter((item) => item.reason === 'rejected');
+    const readOnly = skipped.filter((item) => item.reason === 'read-only');
     const lines = [];
+
+    const names = (list) =>
+      list.slice(0, 2).map((item) => item.label).join(', ') + (list.length > 2 ? ' 외' : '');
+
+    /*
+     * 넣으려 했는데 사이트가 받지 않은 칸.
+     * 이걸 숨기면 확인 패널이 약속한 것과 실제가 달라진다.
+     */
+    if (rejected.length > 0) {
+      lines.push(
+        '사이트가 받지 않은 ' + rejected.length + '칸(' + names(rejected) +
+        ')은 직접 입력해 주세요'
+      );
+    }
+
+    if (readOnly.length > 0) {
+      lines.push(
+        '검색 창으로만 받는 ' + readOnly.length + '칸(' + names(readOnly) +
+        ')은 직접 입력해 주세요'
+      );
+    }
 
     for (const item of tooLong.slice(0, 2)) {
       lines.push(
@@ -1698,10 +2074,25 @@
     bar.className = 'autofill-fit-undo';
     bar.textContent = '되돌리기 (' + undo.length + '개)';
 
-    bar.addEventListener('click', function () {
-      revertFill(undo);
+    bar.addEventListener('click', async function () {
       bar.remove();
-      showToast(root, '되돌렸습니다.', false, []);
+      const stuck = await revertFill(undo);
+
+      if (stuck.length === 0) {
+        showToast(root, '되돌렸습니다.', false, []);
+        return;
+      }
+
+      // 되돌리지 못한 칸을 숨기면 사용자는 비워졌다고 믿고 그대로 제출한다.
+      const names = stuck.slice(0, 2).map((entry) => entry.label).join(', ') +
+        (stuck.length > 2 ? ' 외' : '');
+      stuck.forEach((entry) => markSkipped(entry.el));
+      showToast(
+        root,
+        (undo.length - stuck.length) + '칸을 되돌렸습니다.',
+        true,
+        ['사이트가 되돌리지 않은 ' + stuck.length + '칸(' + names + ')은 직접 지워 주세요']
+      );
     });
 
     root.appendChild(bar);
@@ -1760,9 +2151,16 @@
     button.appendChild(icon);
     button.appendChild(text);
 
+    /*
+     * 검색형 칸은 후보를 기다리느라 몇 초 걸린다.
+     * 그 사이 다시 누르면 같은 칸에 두 번 넣으므로 막는다.
+     */
+    let filling = false;
+
     button.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (filling) return;
 
       button.classList.add('is-busy');
       try {
@@ -1780,12 +2178,22 @@
           markSkippedFields(plan.skipped);
           reportResult(root, { filled: 0, summary: {}, skipped: plan.skipped });
         } else {
-          const run = function (chosen) {
-            const result = applyPlan(plan, chosen);
-            reportResult(root, result);
-            showUndo(root, result.undo);
-            // 채운 뒤에 세야 한다. 채우기 전에 세면 곧 채워질 칸까지 포함된다.
-            showRemaining(root, findRemainingRequired());
+          const run = async function (chosen) {
+            filling = true;
+            button.classList.add('is-busy');
+            try {
+              const result = await applyPlan(plan, chosen);
+              reportResult(root, result);
+              showUndo(root, result.undo);
+              // 채운 뒤에 세야 한다. 채우기 전에 세면 곧 채워질 칸까지 포함된다.
+              showRemaining(root, findRemainingRequired());
+            } catch (err) {
+              console.error('[AutoFill-Fit]', err);
+              showToast(root, '자동 입력 중 오류가 발생했습니다.', true);
+            } finally {
+              filling = false;
+              button.classList.remove('is-busy');
+            }
           };
 
           if (isAllowedHost()) {
@@ -1803,7 +2211,9 @@
         console.error('[AutoFill-Fit]', err);
         showToast(root, '자동 입력 중 오류가 발생했습니다.', true);
       } finally {
-        setTimeout(() => button.classList.remove('is-busy'), 300);
+        setTimeout(() => {
+          if (!filling) button.classList.remove('is-busy');
+        }, 300);
       }
     });
 

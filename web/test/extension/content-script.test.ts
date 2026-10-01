@@ -1419,3 +1419,453 @@ describe('신뢰 origin 설정', () => {
     expect(document.getElementById('autofill-fit-root')).not.toBeNull();
   });
 });
+
+/* ================================================================== *
+ * 그리팅(greetinghr.com) 양식
+ *
+ * 실제 그리팅 지원서 6곳(동성그룹·여기어때·다이닝브랜즈·종근당건강·리터니티·
+ * 로앤컴퍼니)에서 관찰한 구조를 그대로 옮겼다.
+ *
+ *  - Ark UI(Zag.js) 필드 규약: 라벨이 [data-part="label"]에 있고 for가 내부
+ *    입력을 가리키지 않는다. 이걸 못 읽어서 이메일 칸을 아예 못 찾았다.
+ *  - 입력마다 의미 있는 name 경로가 붙는다. 기업이 달라도 같다.
+ *  - 학교명·전공·이메일은 combobox다. 값을 직접 넣고 blur하면 비워 버린다.
+ *  - 주소·우편번호는 readOnly다. 우편번호 검색 팝업으로만 받는다.
+ *
+ * 라벨로만 보던 때 실제 양식에서 '영문이름'에 한글 이름, '상세주소'에 전체 주소,
+ * 고교·대학·대학원 학교명 세 칸에 같은 대학교를 넣으려 했다.
+ * ================================================================== */
+
+/** 확장의 비동기 작업(검색형 칸)이 끝날 때까지 기다린다. */
+async function untilIdle(timeout = 6000) {
+  const start = Date.now();
+  await new Promise((r) => setTimeout(r, 30));
+  while (
+    document.querySelector('.autofill-fit-btn')?.classList.contains('is-busy') &&
+    Date.now() - start < timeout
+  ) {
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  await new Promise((r) => setTimeout(r, 30));
+}
+
+/**
+ * Ark UI combobox를 흉내 낸다.
+ *
+ * - 입력하면 aria-controls 목록에 후보가 뜬다 (candidates가 비면 안 뜬다)
+ * - 후보를 누르면 그 값으로 확정된다
+ * - strict면, 포커스가 빠질 때 입력칸을 '확정된 값'으로 되돌린다.
+ *   확정 전이면 비워지고, 확정 후에 입력칸만 비우면 확정값이 되살아난다 — 둘 다 실제로 관찰했다
+ * - clear-trigger를 누르면 확정이 풀리고 비워진다
+ */
+function wireCombobox(input: HTMLInputElement, candidates: string[], strict: boolean) {
+  const listId = input.getAttribute('aria-controls')!;
+  const list = document.getElementById(listId)!;
+  let committed = '';
+
+  input.addEventListener('input', () => {
+    list.innerHTML = '';
+    const typed = input.value.trim();
+    if (!typed) return;
+    for (const text of candidates.filter((c) => c.includes(typed.slice(0, 2)))) {
+      const option = document.createElement('div');
+      option.setAttribute('role', 'option');
+      option.textContent = text;
+      option.addEventListener('click', () => {
+        committed = text;
+        input.value = text;
+        list.innerHTML = '';
+      });
+      list.appendChild(option);
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    if (strict && input.value !== committed) input.value = committed;
+  });
+
+  const clear = input
+    .closest('[data-scope="combobox"][data-part="root"]')
+    ?.querySelector('[data-part="clear-trigger"]');
+  clear?.addEventListener('click', () => {
+    committed = '';
+    input.value = '';
+  });
+}
+
+/** 그리팅 필드 한 칸 — 실제 마크업의 뼈대 */
+const field = (label: string, control: string) => `
+  <div data-scope="field" data-part="root" role="group">
+    <label data-scope="field" data-part="label">${label}<span>*</span></label>
+    ${control}
+  </div>`;
+
+const combo = (attrs: string, id: string, withClear = true) => `
+  <div data-scope="combobox" data-part="root">
+    <div data-scope="combobox" data-part="control">
+      <input role="combobox" aria-autocomplete="list" ${attrs} aria-controls="${id}-list" id="${id}">
+      ${withClear ? '<span data-part="clear-trigger" aria-label="Clear value"></span>' : ''}
+    </div>
+  </div>
+  <div id="${id}-list" role="listbox"></div>`;
+
+const GREETING_FORM = `
+  <form>
+    ${field('이름', '<input name="basicInformation.name">')}
+    ${field('영문이름', '<input name="basicInformation.englishName">')}
+    ${field('이메일주소', combo('', 'combobox:email:input'))}
+    ${field('연락처', '<button type="button">🇰🇷 +82</button><input name="basicInformation.phoneNumber.nationalNumber">')}
+    ${field('우편번호', '<input name="personalInformation.currentAddress.postalCode" readonly>')}
+    ${field('주소', '<input name="personalInformation.currentAddress.address" readonly>')}
+    ${field('상세주소', '<input name="personalInformation.currentAddress.detailedAddress">')}
+    ${field('학교명', combo('name="educationalBackground.highSchool.schoolName"', 'hs'))}
+    ${field('학교명', combo('name="educationalBackground.universities.0.schoolName"', 'uni'))}
+    ${field('평점 만점기준', '<input name="educationalBackground.universities.0.gpa.score">')}
+    ${field('전공', combo('name="educationalBackground.universities.0.majors.0"', 'major'))}
+    ${field('학교명', combo('name="educationalBackground.graduateSchools.0.schoolName"', 'grad'))}
+    ${field('회사명', '<input name="workHistory.workExperiences.0.companyName">')}
+    ${field('담당업무', '<textarea name="workHistory.workExperiences.0.dutiesResponsibility"></textarea>')}
+    ${field('지원 동기를 작성해 주세요. 0/1000', '<textarea name="additionalQuestion.customAttributeAnswers.1" maxlength="1000"></textarea>')}
+    <fieldset>
+      <legend>지원 경로</legend>
+      <label><input type="radio" name="additionalQuestion.customAttributeAnswers.2" value="사람인"> 사람인</label>
+      <label><input type="radio" name="additionalQuestion.customAttributeAnswers.2" value="대학교 사이트"> 대학교 사이트</label>
+      <label><input type="radio" name="additionalQuestion.customAttributeAnswers.2" value="direct"> 직접입력:</label>
+      <input name="additionalQuestion.customAttributeAnswers.2">
+    </fieldset>
+    <label><input type="checkbox"> 전체 동의</label>
+    <label><input type="checkbox"> 개인정보 필수항목 수집 및 이용 동의 (필수)</label>
+  </form>`;
+
+const UNIVERSITY = {
+  schoolName: '한남대학교',
+  major: '글로벌비즈니스전공',
+  degree: 'BACHELOR',
+  status: 'GRADUATED',
+  gpa: '3.38',
+  gpaScale: '4.50',
+  admissionDate: '2017-03',
+  graduationDate: '2024-02',
+};
+
+const greetingSync = (over: Record<string, unknown> = {}) =>
+  fullSync({
+    syncedProfile: {
+      ...FULL_PROFILE,
+      name: '오태훈',
+      email: 'dhxogns920@gmail.com',
+      phone: '01035964517',
+    },
+    syncedEducation: [UNIVERSITY],
+    ...over,
+  });
+
+const named = (name: string) =>
+  document.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`)!;
+
+/** 학교명·전공은 엄격(목록에서 골라야 남는다), 이메일은 자유 입력 */
+function wireGreeting(
+  schools = ['한남대학교', '한남대학교 대학원'],
+  majors = ['글로벌비즈니스전공'],
+) {
+  wireCombobox(named('educationalBackground.highSchool.schoolName') as HTMLInputElement, schools, true);
+  wireCombobox(named('educationalBackground.universities.0.schoolName') as HTMLInputElement, schools, true);
+  wireCombobox(named('educationalBackground.graduateSchools.0.schoolName') as HTMLInputElement, schools, true);
+  wireCombobox(named('educationalBackground.universities.0.majors.0') as HTMLInputElement, majors, true);
+  wireCombobox(document.getElementById('combobox:email:input') as HTMLInputElement, [], false);
+}
+
+describe('그리팅 양식 — 라벨', () => {
+  it('[data-part="label"]에서 이메일 칸을 찾는다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    // 예전에는 이 칸을 아예 못 찾았다
+    expect(panel?.textContent).toContain('이메일주소');
+    expect(panel?.textContent).toContain('dhxogns920@gmail.com');
+  });
+
+  it('연락처를 국가 버튼이 아니라 "연락처"로 부른다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    const labels = [...panel!.querySelectorAll('.autofill-fit-row__label')].map(
+      (e) => e.textContent,
+    );
+    expect(labels).toContain('연락처');
+    expect(labels.join(' ')).not.toContain('+82');
+  });
+
+  it('칸 이름에서 필수 표시(*)를 뗀다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    expect(panel?.querySelector('.autofill-fit-row__label')?.textContent).toBe('이름');
+  });
+});
+
+describe('그리팅 양식 — 틀린 칸에 넣지 않는다', () => {
+  // 검색형 칸은 후보를 최대 2초 기다린다 — 기본 5초로는 여러 칸이 겹치면 모자란다
+  vi.setConfig({ testTimeout: 15_000 });
+  async function fillGreeting(over: Record<string, unknown> = {}) {
+    installChrome(greetingSync(over));
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+  }
+
+  it('영문이름에 한글 이름을 넣지 않는다', async () => {
+    await fillGreeting();
+
+    expect(named('basicInformation.name').value).toBe('오태훈');
+    expect(named('basicInformation.englishName').value).toBe('');
+  });
+
+  it('상세주소에 전체 주소를 넣지 않는다', async () => {
+    await fillGreeting();
+
+    expect(named('personalInformation.currentAddress.detailedAddress').value).toBe('');
+  });
+
+  it('대학교 이름은 대학교 칸에만 — 고교·대학원 칸은 비운다', async () => {
+    await fillGreeting();
+
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('한남대학교');
+    expect(named('educationalBackground.highSchool.schoolName').value).toBe('');
+    expect(named('educationalBackground.graduateSchools.0.schoolName').value).toBe('');
+  });
+
+  it('대학원 학력은 대학원 칸에 넣는다', async () => {
+    await fillGreeting({
+      syncedEducation: [
+        { ...UNIVERSITY, schoolName: '한남대학교 대학원', degree: 'MASTER' },
+        UNIVERSITY,
+      ],
+    });
+
+    expect(named('educationalBackground.graduateSchools.0.schoolName').value).toBe(
+      '한남대학교 대학원',
+    );
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('한남대학교');
+  });
+
+  it('평점 칸에 만점 기준이 아니라 평점을 넣는다', async () => {
+    await fillGreeting();
+
+    // 라벨에 '만점기준'이 함께 붙어 있어 예전 규칙은 이 칸을 건너뛰거나 4.50을 넣었다
+    expect(named('educationalBackground.universities.0.gpa.score').value).toBe('3.38');
+  });
+
+  it('담당업무에는 자소서가 아니라 경력의 주요 업무를 넣는다', async () => {
+    await fillGreeting({ syncedCareers: CAREERS });
+
+    expect(named('workHistory.workExperiences.0.companyName').value).toBe('로지소프트');
+    expect(named('workHistory.workExperiences.0.dutiesResponsibility').value).toBe('결제 API');
+  });
+
+  it('추가 질문 textarea는 자소서 문항으로 매칭한다', async () => {
+    await fillGreeting({ syncedEssays: ESSAYS });
+
+    expect(named('additionalQuestion.customAttributeAnswers.1').value).toBe(ESSAYS[0].content);
+  });
+
+  it('지원 경로 라디오와 직접입력 칸은 건드리지 않는다', async () => {
+    await fillGreeting();
+
+    const radios = document.querySelectorAll<HTMLInputElement>(
+      'input[type="radio"][name="additionalQuestion.customAttributeAnswers.2"]',
+    );
+    expect([...radios].some((r) => r.checked)).toBe(false);
+    expect(
+      document.querySelector<HTMLInputElement>(
+        'input:not([type="radio"])[name="additionalQuestion.customAttributeAnswers.2"]',
+      )!.value,
+    ).toBe('');
+  });
+
+  it('동의 체크박스는 절대 건드리지 않는다', async () => {
+    await fillGreeting();
+
+    const boxes = document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    expect([...boxes].every((b) => !b.checked)).toBe(true);
+  });
+});
+
+describe('그리팅 양식 — 검색형 칸(combobox)', () => {
+  // 검색형 칸은 후보를 최대 2초 기다린다 — 기본 5초로는 여러 칸이 겹치면 모자란다
+  vi.setConfig({ testTimeout: 15_000 });
+  it('목록에서 정확히 같은 후보를 골라 확정한다 — 포커스가 빠져도 남는다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    // strict combobox라 목록에서 고르지 않았다면 blur 때 비워졌을 것이다
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('한남대학교');
+    expect(named('educationalBackground.universities.0.majors.0').value).toBe('글로벌비즈니스전공');
+  });
+
+  it('비슷한 후보만 있으면 고르지 않는다 — 틀린 학교보다 빈 칸이 낫다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    // '한남대학교'는 없고 '한남대학교 대학원'만 있다
+    wireGreeting(['한남대학교 대학원', '한남대학교 경영대학원']);
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('');
+    expect(toastText()).toContain('사이트가 받지 않은');
+    expect(toastText()).toContain('학교명');
+  });
+
+  it('후보를 띄우지 않는 칸(이메일)은 입력값을 그대로 둔다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    expect(
+      (document.getElementById('combobox:email:input') as HTMLInputElement).value,
+    ).toBe('dhxogns920@gmail.com');
+  });
+
+  it('넣지 못한 칸은 "입력 완료"로 세지 않는다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting(['다른대학교']);
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    // 패널은 학교명을 약속했지만 실제로 안 들어갔다 — 숫자에 포함하면 거짓이다
+    expect(toastText()).not.toContain('학교 1');
+    expect(named('educationalBackground.universities.0.schoolName').className).toContain(
+      'autofill-fit-skipped',
+    );
+  });
+});
+
+describe('그리팅 양식 — 읽기 전용 칸', () => {
+  // 검색형 칸은 후보를 최대 2초 기다린다 — 기본 5초로는 여러 칸이 겹치면 모자란다
+  vi.setConfig({ testTimeout: 15_000 });
+  it('우편번호·주소는 넣지 않고 직접 입력하라고 알린다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = GREETING_FORM;
+    wireGreeting();
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    expect(named('personalInformation.currentAddress.address').value).toBe('');
+    expect(toastText()).toContain('검색 창으로만 받는 2칸');
+    expect(named('personalInformation.currentAddress.address').className).toContain(
+      'autofill-fit-skipped',
+    );
+  });
+});
+
+describe('그리팅이 아닌 사이트에도 같은 실수를 하지 않는다', () => {
+  it('"영문 이름" 라벨에 한글 이름을 넣지 않는다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="n">이름</label><input id="n"></div>
+        <div><label for="en">영문 이름</label><input id="en"></div>
+        <div><label for="en2">English Name</label><input id="en2"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    expect(value('#n')).toBe('오태훈');
+    expect(value('#en')).toBe('');
+    expect(value('#en2')).toBe('');
+  });
+
+  it('"상세주소" 라벨에 전체 주소를 넣지 않는다', async () => {
+    installChrome(greetingSync());
+    document.body.innerHTML = `
+      <form>
+        <div><label for="a">주소</label><input id="a"></div>
+        <div><label for="d">상세주소</label><input id="d"></div>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+
+    expect(value('#a')).toBe(FULL_PROFILE.address);
+    expect(value('#d')).toBe('');
+  });
+});
+
+describe('그리팅 양식 — 되돌리기', () => {
+  vi.setConfig({ testTimeout: 15_000 });
+
+  async function fillThenUndo(form: string) {
+    installChrome(greetingSync());
+    document.body.innerHTML = form;
+    wireGreeting();
+    await loadContentScript();
+    clickAutofill();
+    await untilIdle();
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('한남대학교');
+
+    document.querySelector<HTMLElement>('.autofill-fit-undo')?.click();
+    await new Promise((r) => setTimeout(r, 400));
+  }
+
+  /*
+   * 입력칸만 비우면 포커스가 빠질 때 Ark UI가 확정값을 되살린다.
+   * 실제 그리팅에서 '되돌렸습니다(6개)'라고 해 놓고 학교명·전공이 그대로 남았다.
+   */
+  it('확정된 검색형 칸도 비운다', async () => {
+    await fillThenUndo(GREETING_FORM);
+
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('');
+    expect(named('educationalBackground.universities.0.majors.0').value).toBe('');
+    expect(named('basicInformation.name').value).toBe('');
+    expect(toastText()).toContain('되돌렸습니다');
+  });
+
+  it('사이트가 되돌리지 않은 칸은 그렇다고 말한다 — 비워졌다고 믿고 제출하지 않게', async () => {
+    // 지우기 버튼이 없는 combobox — 비워도 확정값이 되살아난다
+    await fillThenUndo(
+      GREETING_FORM.replace(
+        combo('name="educationalBackground.universities.0.schoolName"', 'uni'),
+        combo('name="educationalBackground.universities.0.schoolName"', 'uni', false),
+      ),
+    );
+
+    expect(named('educationalBackground.universities.0.schoolName').value).toBe('한남대학교');
+    expect(toastText()).toContain('사이트가 되돌리지 않은 1칸');
+    expect(toastText()).toContain('학교명');
+    expect(toastText()).not.toMatch(/^되돌렸습니다/);
+  });
+});
+
