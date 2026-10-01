@@ -312,9 +312,24 @@
         .forEach((l) => parts.push(l.textContent));
     }
 
-    // 3-2. 감싸고 있는 <label>
-    const wrapping = el.closest('label');
-    if (wrapping) parts.push(wrapping.textContent);
+    /*
+     * 3-2. 감싸고 있는 <label>
+     *
+     * 가장 가까운 <label>이 비어 있으면 더 바깥 <label>을 본다. SM 채용 사이트는
+     * 입력을 빈 <label>로 감싸고 진짜 라벨은 몇 단계 바깥에 둔다 — 그래서 모든 칸이
+     * '이름 없는 칸'으로 똑같이 보였다. 바깥으로 갈수록 이웃 칸을 품을 수 있으므로
+     * 입력이 하나뿐인 <label>만 받는다.
+     */
+    let wrapping = el.closest('label');
+    while (wrapping) {
+      const inputs = wrapping.querySelectorAll('input, textarea, select').length;
+      if (inputs > 1) break;
+      if ((wrapping.textContent || '').trim()) {
+        parts.push(wrapping.textContent);
+        break;
+      }
+      wrapping = wrapping.parentElement && wrapping.parentElement.closest('label');
+    }
 
     // 3-3. aria-labelledby가 가리키는 요소
     const labelledBy = el.getAttribute('aria-labelledby');
@@ -341,10 +356,16 @@
     // 3-4. label을 못 찾으면 부모 컨테이너를 보되, 그 안에 입력이 하나뿐일 때만.
     //      입력이 여러 개면 이웃 필드의 라벨까지 흡수해 이름 칸에 이메일이 들어간다.
     if (parts.join('').trim() === '') {
-      const box = el.closest('div, li, td, th, p, fieldset');
-      if (box && box.querySelectorAll('input, textarea, select').length === 1) {
-        const text = box.textContent || '';
-        if (text.length <= 60) parts.push(text);
+      // 가장 가까운 상자가 비어 있으면 몇 단계 더 올라간다. 입력이 하나뿐일 때만.
+      let box = el.closest('div, li, td, th, p, fieldset');
+      for (let depth = 0; box && depth < 4; depth++) {
+        if (box.querySelectorAll('input, textarea, select').length !== 1) break;
+        const text = (box.textContent || '').trim();
+        if (text) {
+          if (text.length <= 60) parts.push(text);
+          break;
+        }
+        box = box.parentElement && box.parentElement.closest('div, li, td, th, p, fieldset');
       }
     }
 

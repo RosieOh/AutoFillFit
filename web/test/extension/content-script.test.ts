@@ -1869,3 +1869,50 @@ describe('그리팅 양식 — 되돌리기', () => {
   });
 });
 
+/**
+ * 입력을 빈 <label>로 감싸고 진짜 라벨은 바깥에 두는 구조.
+ * SM 채용 사이트(구버전 그리팅 컴포넌트)가 이렇다. 가장 가까운 <label>만 보면
+ * 모든 칸이 '이름 없는 칸'으로 똑같이 나온다.
+ */
+describe('바깥에 있는 라벨', () => {
+  const NESTED = (text: string, name: string) => `
+    <div>
+      <label>${text}
+        <div><div>
+          <label><input name="${name}"></label>
+        </div></div>
+      </label>
+    </div>`;
+
+  it('빈 <label> 바깥의 진짜 라벨을 읽는다', async () => {
+    installChrome(fullSync());
+    document.body.innerHTML = `<form>${NESTED('이메일 주소', 'email')}${NESTED('휴대폰 번호', 'mobile')}</form>`;
+
+    await loadContentScript();
+    const panel = openPanel();
+
+    const labels = [...panel!.querySelectorAll('.autofill-fit-row__label')].map((e) => e.textContent);
+    expect(labels).toEqual(['이메일 주소', '휴대폰 번호']);
+    expect(labels).not.toContain('이름 없는 칸');
+  });
+
+  it('바깥 <label>이 다른 칸까지 품으면 그 라벨은 쓰지 않는다', async () => {
+    installChrome(fullSync());
+    // 하나의 <label>이 두 입력을 감싼다 — 둘 다 이 라벨을 쓰면 오입력이 된다
+    document.body.innerHTML = `
+      <form>
+        <label>이메일
+          <label><input name="field1"></label>
+          <label><input name="field2"></label>
+        </label>
+      </form>`;
+
+    await loadContentScript();
+    clickAutofill();
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(value('input[name="field1"]')).toBe('');
+    expect(value('input[name="field2"]')).toBe('');
+  });
+});
+
