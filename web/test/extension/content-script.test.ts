@@ -1916,3 +1916,47 @@ describe('바깥에 있는 라벨', () => {
   });
 });
 
+/**
+ * 클릭할 수 있는가.
+ *
+ * 확장 UI를 감싸는 #autofill-fit-root는 pointer-events: none이다 — 빈 영역이
+ * 지원서 클릭을 가로채지 않게 하려는 것이다. 자식은 이 값을 물려받으므로
+ * 사용자가 누르는 요소는 auto를 명시해야 한다.
+ *
+ * 확인 패널·되돌리기·남은 칸 버튼에 이걸 빠뜨려서, 실제 Chrome에서
+ * '선택한 N개 입력'이 눌리지 않았다(클릭이 패널을 통과해 뒤의 지원서로 갔다).
+ * jsdom은 클릭 위치 판정을 하지 않고 테스트는 .click()을 직접 불러서
+ * 테스트로는 잡히지 않았다. 그래서 규칙 자체를 고정한다.
+ */
+describe('확장 UI의 클릭 가능 여부 (styles.css)', () => {
+  const CSS_TEXT = readFileSync(path.resolve(__dirname, '../../../styles.css'), 'utf-8');
+
+  /** `#autofill-fit-root .클래스 {` 기본 규칙(가상 클래스 없는 것)의 본문 */
+  const ruleBody = (selector: string) => {
+    const escaped = selector
+      .replace(/[.#]/g, (c) => '\\' + c)
+      .replace(/\s+/g, '\\s+');
+    const re = new RegExp(escaped + '\\s*\\{([^}]*)\\}');
+    return re.exec(CSS_TEXT)?.[1] ?? null;
+  };
+
+  it('루트는 클릭을 가로채지 않는다', () => {
+    expect(ruleBody('#autofill-fit-root')).toMatch(/pointer-events:\s*none/);
+  });
+
+  it.each([
+    ['자동입력 버튼', '.autofill-fit-btn'],
+    ['확인 패널', '.autofill-fit-panel'],
+    ['되돌리기 버튼', '.autofill-fit-undo'],
+    ['남은 칸 버튼', '.autofill-fit-remaining'],
+  ])('%s은 클릭을 받는다', (_label, cls) => {
+    const body = ruleBody(`#autofill-fit-root ${cls}`);
+    expect(body, `${cls} 규칙이 없다`).not.toBeNull();
+    expect(body).toMatch(/pointer-events:\s*auto/);
+  });
+
+  it('토스트는 클릭을 받지 않는다 — 떠 있는 동안 아래 지원서를 가리면 안 된다', () => {
+    expect(ruleBody('#autofill-fit-root .autofill-fit-toast')).toMatch(/pointer-events:\s*none/);
+  });
+});
+

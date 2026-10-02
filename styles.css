@@ -80,6 +80,11 @@
  * 지원서 위에 뜨는 UI라, 페이지의 어떤 스타일도 이기도록 값을 명시한다.
  */
 #autofill-fit-root .autofill-fit-panel {
+  /*
+   * 루트가 pointer-events: none이라 명시하지 않으면 물려받는다.
+   * 그러면 클릭이 패널을 통과해 뒤의 지원서로 간다 — '선택한 N개 입력'이 눌리지 않았다.
+   */
+  pointer-events: auto;
   order: -2; /* 토스트보다도 위 */
   box-sizing: border-box;
   width: 320px;
@@ -249,6 +254,7 @@
 /* --------------------- 남은 필수 칸 --------------------- */
 /* 20칸이 채워지면 다 됐다고 믿는다. 남은 것도 세어 줘야 한다 */
 #autofill-fit-root .autofill-fit-remaining {
+  pointer-events: auto; /* 루트의 none을 물려받지 않게 */
   order: -1;
   align-self: flex-end;
   min-height: 34px;
@@ -271,6 +277,7 @@
 /* --------------------- 되돌리기 --------------------- */
 /* 잘못 채워진 칸을 손으로 지우지 않아도 되게 한다 */
 #autofill-fit-root .autofill-fit-undo {
+  pointer-events: auto; /* 루트의 none을 물려받지 않게 */
   order: -1;
   align-self: flex-end;
   min-height: 34px;
